@@ -36,5 +36,6 @@ public static class PipeProtocol
 {
     public const string PipeName = "BlockBox.GlobalSearch.v1";
     public const int MaxQueryLength = 512;
-    public const int MaxPageSize = 500;
+    // 单页上限：UI 常规分页用 500，按时间/大小排序时会一次性拉更多来补齐结果。
+    public const int MaxPageSize = 5000;
 }

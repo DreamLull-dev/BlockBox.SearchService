@@ -54,6 +54,10 @@ namespace BlockBox.Views
         private int _iconLoadLimit = 200;
         private readonly SemaphoreSlim _thumbnailSemaphore = new(4, 4);
         private readonly SemaphoreSlim _metadataSemaphore = new(4, 4);
+        // 按时间/大小排序前先把后续页补齐，否则没加载出来的文件不参与排序。
+        private const int BulkPageSize = 5000;
+        private const int MaxRowsForFullSort = 20000;
+        private bool _bulkLoading;
         public ObservableCollection<SearchResultItem> Results { get; } = new();
 
         // 缩略图悬停预览：停留 200ms 才弹出，最大 200×200 等比缩放。
@@ -421,6 +425,17 @@ namespace BlockBox.Views
             }
 
             long request = ++_sortRequestVersion;
+            long version = _searchVersion;
+
+            // 时间/大小是客户端排序：先把后续页补齐，否则没加载出来的文件不会参与排序。
+            if (_searchHasMore && Results.Count < MaxRowsForFullSort)
+                await LoadAllPagesForSortAsync(version);
+            if (request != _sortRequestVersion || version != _searchVersion) return;
+
+            // 结果太多时只对上限内的部分排序，并停止继续追加名序页，避免打乱已排好的顺序。
+            bool capped = _searchHasMore;
+            if (capped) _searchHasMore = false;
+
             var items = Results.ToList();
             StatusText.Text = LanguageService.Translate("正在读取文件信息…");
             await Task.Run(() => Parallel.ForEach(items,
@@ -428,14 +443,71 @@ namespace BlockBox.Views
             if (request != _sortRequestVersion) return;
             SortLoadedResults();
             UpdateResultsStatus();
+            if (capped)
+                StatusText.Text = LanguageService.TranslateFormat("结果超过 {count} 项，仅对已加载部分排序", ("{count}", MaxRowsForFullSort));
+        }
+
+        /// <summary>
+        /// 按当前查询把剩余分页全部取回来（大页 + 总量上限）。只用于客户端排序，
+        /// 期间不做逐页元数据读取，排序前统一读一次。
+        /// </summary>
+        private async Task LoadAllPagesForSortAsync(long version)
+        {
+            _bulkLoading = true;
+            try
+            {
+                int stalled = 0;
+                while (_searchHasMore && Results.Count < MaxRowsForFullSort && version == _searchVersion)
+                {
+                    StatusText.Text = LanguageService.TranslateFormat("正在加载全部结果（{count} 项）", ("{count}", Results.Count));
+                    string? beforeName = _cursorName;
+                    long? beforeFile = _cursorFileId;
+                    await LoadNextPageAsync(version, BulkPageSize);
+                    if (version != _searchVersion) return;
+
+                    // 用游标是否前进判断有没有进展：整页都被分类过滤掉时行数不变，但游标会前进。
+                    bool advanced = !string.Equals(_cursorName, beforeName, StringComparison.Ordinal)
+                        || _cursorFileId != beforeFile;
+                    if (!advanced)
+                    {
+                        // 上一页可能还在加载中（_isLoadingMore），稍等重试，避免排序被截断在半路。
+                        if (_searchHasMore && _isLoadingMore && ++stalled < 20)
+                        {
+                            await Task.Delay(120);
+                            if (version != _searchVersion) return;
+                            continue;
+                        }
+                        break;
+                    }
+                    stalled = 0;
+                }
+            }
+            catch (Exception ex) when (ex is IOException or TimeoutException or System.UnauthorizedAccessException or InvalidDataException)
+            {
+                if (version == _searchVersion) StatusText.Text = LanguageService.Translate("搜索服务连接失败，请检查服务状态。");
+            }
+            finally
+            {
+                _bulkLoading = false;
+            }
         }
 
         private void SortLoadedResults()
         {
             var snapshot = Results.ToList();
             snapshot.Sort(CompareResults);
-            Results.Clear();
-            foreach (var item in snapshot) Results.Add(item);
+            // 先摘掉 ItemsSource 再重建：两万条逐条 Add 不会每条都触发列表刷新，
+            // 重新挂回去只做一次整体重建（排序本来就会回到顶部）。
+            ResultsList.ItemsSource = null;
+            try
+            {
+                Results.Clear();
+                foreach (var item in snapshot) Results.Add(item);
+            }
+            finally
+            {
+                ResultsList.ItemsSource = Results;
+            }
         }
 
         /// <summary>
@@ -469,9 +541,9 @@ namespace BlockBox.Views
         /// </summary>
         private void AppendPage(List<SearchResultItem> pageItems)
         {
-            // 名称模式下服务端就按显示顺序（含倒序）分页，直接追加；其它排序是本地排序，
-            // 用二分插入。绝不能用 Clear + 重新 Add —— 那会让 ListView 重置滚动位置。
-            if (_sortMode == ResultSortMode.Name)
+            // 名称模式下服务端就按显示顺序（含倒序）分页，直接追加；批量补齐排序时也先按名序
+            // 追加，最后统一排序；其它排序是本地排序，用二分插入。
+            if (_bulkLoading || _sortMode == ResultSortMode.Name)
             {
                 foreach (var item in pageItems) Results.Add(item);
                 return;
@@ -1179,13 +1251,13 @@ namespace BlockBox.Views
             }
         }
 
-        private async Task LoadNextPageAsync(long version)
+        private async Task LoadNextPageAsync(long version, int pageSize = 500)
         {
             if (version != _searchVersion || _isLoadingMore || !_searchHasMore && Results.Count > 0) return;
             _isLoadingMore = true;
             try
             {
-                var response = await _searchClient.SendAsync("search", _activeQuery, _activeKind, 500,
+                var response = await _searchClient.SendAsync("search", _activeQuery, _activeKind, pageSize,
                     afterName: _cursorName, afterVolumeId: _cursorVolumeId, afterFileId: _cursorFileId,
                     shouldContinue: () => version == _searchVersion,
                     descending: _sortMode == ResultSortMode.Name && _sortReversed);
@@ -1194,7 +1266,8 @@ namespace BlockBox.Views
                 var hits = response.Results ?? new();
                 var pageItems = hits.Where(hit => KindMatches(hit.Path, _selectedKindIndex))
                     .Select(hit => new SearchResultItem(hit)).ToList();
-                if (_sortMode != ResultSortMode.Name)
+                // 批量补齐用于排序时不逐页读元数据，排序前统一读一次。
+                if (!_bulkLoading && _sortMode != ResultSortMode.Name)
                 {
                     StatusText.Text = LanguageService.Translate("正在读取文件信息…");
                     await Task.Run(() => Parallel.ForEach(pageItems,
@@ -1209,9 +1282,9 @@ namespace BlockBox.Views
                 UpdateResultsStatus();
                 if (Results.Count == 0 && !_searchHasMore && !string.IsNullOrEmpty(response.Message))
                     StatusText.Text = LocalizeServiceMessage(response.Message);
-                if (_searchHasMore && hits.Count == 0)
+                if (!_bulkLoading && _searchHasMore && hits.Count == 0)
                     DispatcherQueue.TryEnqueue(() => _ = LoadNextPageAsync(version));
-                else if (_searchHasMore && pageItems.Count > 0 && FindScrollViewer(ResultsList) is { } scrollViewer
+                else if (!_bulkLoading && _searchHasMore && pageItems.Count > 0 && FindScrollViewer(ResultsList) is { } scrollViewer
                     && scrollViewer.ScrollableHeight <= 0)
                     // 只有列表根本还不能滚动时才继续补页（例如整页都被分类过滤掉）；能滚动时
                     // 交给滚动事件，避免插入到上方后“贴底”状态反复触发加载。
