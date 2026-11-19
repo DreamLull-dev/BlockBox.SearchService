@@ -103,7 +103,16 @@ if ($null -ne $existingService) {
 Stop-SearchServiceProcesses
 
 # 2) Deploy the program files.
-Copy-Item -Path (Join-Path $sourceDirectory '*') -Destination $installDirectory -Recurse -Force
+if (-not [string]::Equals($sourceDirectory, $installDirectory, [StringComparison]::OrdinalIgnoreCase)) {
+    Copy-Item -Path (Join-Path $sourceDirectory '*') -Destination $installDirectory -Recurse -Force
+}
+# Deploy the install/uninstall scripts too: the uninstall entry and manual removal need them.
+foreach ($scriptName in @('Install-SearchService.ps1', 'Uninstall-SearchService.ps1')) {
+    $scriptSource = Join-Path $PSScriptRoot $scriptName
+    if (Test-Path -LiteralPath $scriptSource) {
+        Copy-Item -LiteralPath $scriptSource -Destination $installDirectory -Force
+    }
+}
 & icacls.exe $installDirectory /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Could not protect the search service installation directory.' }
 
@@ -170,6 +179,24 @@ if ($status.Status -ne 'Running') {
     if (Test-Path -LiteralPath $serviceLogPath) { $tail = (Get-Content -LiteralPath $serviceLogPath -Tail 15) -join [Environment]::NewLine }
     throw "The service stopped right after starting (state: $($status.Status)).`nService log: $serviceLogPath`n$tail"
 }
+
+# 7) Register an "Apps & features" uninstall entry so the service can be removed on its own
+#    (a Store app cannot run scripts when it is uninstalled).
+$uninstallEntry = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\BlockBox.SearchService'
+$uninstallScriptPath = Join-Path $installDirectory 'Uninstall-SearchService.ps1'
+$fileVersion = ''
+try { $fileVersion = (Get-Item -LiteralPath $serviceExecutablePath).VersionInfo.FileVersion } catch { }
+if ([string]::IsNullOrWhiteSpace($fileVersion)) { $fileVersion = '1.0.0.0' }
+New-Item -Path $uninstallEntry -Force | Out-Null
+Set-ItemProperty -Path $uninstallEntry -Name DisplayName -Value 'Block Box Search Service'
+Set-ItemProperty -Path $uninstallEntry -Name DisplayVersion -Value $fileVersion
+Set-ItemProperty -Path $uninstallEntry -Name Publisher -Value 'BlockBox'
+Set-ItemProperty -Path $uninstallEntry -Name InstallLocation -Value $installDirectory
+Set-ItemProperty -Path $uninstallEntry -Name DisplayIcon -Value $serviceExecutablePath
+Set-ItemProperty -Path $uninstallEntry -Name UninstallString -Value ('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' + $uninstallScriptPath + '"')
+Set-ItemProperty -Path $uninstallEntry -Name NoModify -Value 1 -Type DWord
+Set-ItemProperty -Path $uninstallEntry -Name NoRepair -Value 1 -Type DWord
+Write-Host 'Registered uninstall entry: Settings > Apps > "Block Box Search Service"'
 
 Write-Host 'BlockBox Global Search service installed and running.'
 if (Test-Path -LiteralPath $serviceLogPath) {

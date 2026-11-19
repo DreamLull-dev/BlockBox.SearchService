@@ -15,7 +15,9 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
@@ -1106,7 +1108,7 @@ namespace BlockBox.Views
             ServiceMissingText.Text = LanguageService.Translate(installed
                 ? "搜索服务已安装但没有运行。启动它需要管理员权限，启动后即可搜索整盘文件。"
                 : "全局搜索需要「Block Box 搜索服务」。它在后台为整盘建立文件索引（只读文件名、大小和时间），安装时需要管理员权限。");
-            ServiceMissingHint.Text = LanguageService.Translate("安装完成后会自动重新连接。");
+            ServiceMissingHint.Text = LanguageService.Translate("支持 .msix 安装包或 .zip 压缩包；安装完成后会自动重新连接。");
             ServiceMissingHint.Visibility = installed ? Visibility.Collapsed : Visibility.Visible;
             DownloadServiceButton.Visibility = installed ? Visibility.Collapsed : Visibility.Visible;
             DownloadServiceButton.Content = LanguageService.Translate("前往下载");
@@ -1153,10 +1155,18 @@ namespace BlockBox.Views
                 picker.FileTypeFilter.Add(".msix");
                 picker.FileTypeFilter.Add(".msixbundle");
                 picker.FileTypeFilter.Add(".appx");
+                picker.FileTypeFilter.Add(".zip");
                 WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
 
                 StorageFile? file = await picker.PickSingleFileAsync();
                 if (file is null) return;
+
+                // 零成本分发：零签名的 zip（解压后跑安装脚本）；有证书时用 MSIX。
+                if (string.Equals(file.FileType, ".zip", StringComparison.OrdinalIgnoreCase))
+                {
+                    await InstallServiceFromZipAsync(file);
+                    return;
+                }
 
                 StatusText.Text = LanguageService.Translate("正在启动安装程序…");
                 if (!await Windows.System.Launcher.LaunchFileAsync(file))
@@ -1169,6 +1179,92 @@ namespace BlockBox.Views
             catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
             {
                 StatusText.Text = LanguageService.Translate("无法启动安装程序，请双击安装包后再试。");
+            }
+        }
+
+        /// <summary>解压 GitHub Releases 下载的服务压缩包，提权运行里面的安装脚本。</summary>
+        private async Task InstallServiceFromZipAsync(StorageFile zipFile)
+        {
+            string workRoot = Path.Combine(Path.GetTempPath(), "BlockBoxServiceInstall", Guid.NewGuid().ToString("N"));
+            try
+            {
+                Directory.CreateDirectory(workRoot);
+                string zipPath = zipFile.Path;
+                if (string.IsNullOrEmpty(zipPath) || !File.Exists(zipPath))
+                {
+                    zipPath = Path.Combine(workRoot, "service.zip");
+                    using var source = await zipFile.OpenStreamForReadAsync();
+                    using var target = File.Create(zipPath);
+                    await source.CopyToAsync(target);
+                }
+
+                string extractDirectory = Path.Combine(workRoot, "files");
+                StatusText.Text = LanguageService.Translate("正在解压搜索服务…");
+                try
+                {
+                    ZipFile.ExtractToDirectory(zipPath, extractDirectory, overwriteFiles: true);
+                }
+                catch (Exception ex) when (ex is IOException or InvalidDataException)
+                {
+                    StatusText.Text = LanguageService.Translate("压缩包解压失败，请确认文件完整。");
+                    return;
+                }
+
+                string? scriptPath = FindFile(extractDirectory, "Install-SearchService.ps1");
+                string? serviceExecutable = FindFile(extractDirectory, "BlockBox.SearchService.exe");
+                if (scriptPath is null || serviceExecutable is null)
+                {
+                    StatusText.Text = LanguageService.Translate("压缩包里没有找到安装脚本或服务程序。");
+                    return;
+                }
+
+                StatusText.Text = LanguageService.Translate("正在安装搜索服务（需要管理员权限）…");
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe"),
+                    Arguments = $"-NoProfile -ExecutionPolicy Bypass -File \"{scriptPath}\" -ServiceExecutable \"{serviceExecutable}\"",
+                    UseShellExecute = true,
+                    Verb = "runas",                 // 触发 UAC，安装服务必须提权
+                    WindowStyle = ProcessWindowStyle.Normal
+                };
+                using Process? process = Process.Start(startInfo);
+                if (process is null)
+                {
+                    StatusText.Text = LanguageService.Translate("无法启动安装程序，请双击安装包后再试。");
+                    return;
+                }
+                await process.WaitForExitAsync();
+
+                if (process.ExitCode != 0)
+                {
+                    StatusText.Text = LanguageService.TranslateFormat("安装脚本执行失败（退出代码 {code}）。",
+                        ("{code}", process.ExitCode));
+                    return;
+                }
+
+                await WaitForServiceAsync();
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
+            {
+                StatusText.Text = LanguageService.Translate("无法启动安装程序，请双击安装包后再试。");
+            }
+            finally
+            {
+                try { if (Directory.Exists(workRoot)) Directory.Delete(workRoot, recursive: true); }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
+        }
+
+        private static string? FindFile(string root, string fileName)
+        {
+            try
+            {
+                return Directory.EnumerateFiles(root, fileName, SearchOption.AllDirectories).FirstOrDefault();
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return null;
             }
         }
 

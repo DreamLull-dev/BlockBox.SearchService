@@ -1,30 +1,32 @@
 <#
 .SYNOPSIS
-    构建（并可签名）Block Box 搜索服务的伴侣 MSIX。
+    Build (and optionally sign) the companion MSIX for the Block Box search service.
 
 .DESCRIPTION
-    把 BlockBox.SearchService 发布成自包含程序，连同 AppxManifest.xml 打成一个独立 MSIX。
-    这个包只用于“不含服务的应用（例如 Microsoft Store 版）”在需要整盘搜索时单独安装：
-      - 安装需要管理员权限（打包服务必须提权安装）；
-      - 服务随包注册、随包卸载，不会残留 sc create 的注册项。
+    Publishes BlockBox.SearchService as a self-contained app and packs it, together with
+    AppxManifest.xml, into a standalone MSIX. The package is meant for the app build that
+    does not ship the service (for example the Microsoft Store version): the user installs
+    this companion package separately when whole-disk search is wanted.
+      - Installing requires administrator rights (packaged services cannot be installed per-user).
+      - The service is registered and removed together with the package.
 
 .PARAMETER Version
-    四段版本号，例如 1.0.0.0。必须严格递增才能覆盖安装。
+    Four-part version, for example 1.0.0.0. Must increase to upgrade.
 
 .PARAMETER Publisher
-    证书主题，必须与签名证书的 Subject 完全一致（例如 CN=BlockBox）。
+    Certificate subject; must match the signing certificate Subject exactly (for example CN=BlockBox).
 
 .PARAMETER CertPath
-    PFX 证书路径。不传则生成未签名包（只适合本机测试）。
+    PFX certificate path. Omit to produce an unsigned package (local testing only).
 
 .PARAMETER CertPassword
-    PFX 密码。
+    PFX password.
 
 .PARAMETER CertThumbprint
-    证书指纹（USB 令牌 / 证书存储里的证书，私钥不能导出成 PFX 时使用）。
+    Certificate thumbprint (USB token / certificate store when the private key cannot be exported).
 
 .PARAMETER OutputDirectory
-    输出目录，默认 <本目录>\out。
+    Output directory; defaults to <this folder>\out.
 #>
 param(
     [string] $Version = '1.0.0.0',
@@ -38,17 +40,17 @@ param(
 $ErrorActionPreference = 'Stop'
 
 if ($Version -notmatch '^\d+\.\d+\.\d+\.\d+$') {
-    throw "Version 必须是四段数字（例如 1.0.0.0），当前是：$Version"
+    throw "Version must have four numeric parts (for example 1.0.0.0); got: $Version"
 }
 if ($Version -eq '0.0.0.0') {
-    throw 'Version 不能是 0.0.0.0'
+    throw 'Version cannot be 0.0.0.0'
 }
 if ([string]::IsNullOrWhiteSpace($Publisher)) {
-    throw 'Publisher 不能为空，必须与签名证书主题一致。'
+    throw 'Publisher is required and must match the signing certificate subject.'
 }
 
 function Find-SdkTool([string] $name) {
-    # 1) NuGet 里的 Microsoft.Windows.SDK.BuildTools（很多开发机没装完整 Windows SDK）
+    # 1) Microsoft.Windows.SDK.BuildTools from NuGet (many dev machines lack the full Windows SDK).
     $nugetRoot = Join-Path $env:USERPROFILE '.nuget\packages\microsoft.windows.sdk.buildtools'
     if (Test-Path -LiteralPath $nugetRoot) {
         $candidate = Get-ChildItem -LiteralPath $nugetRoot -Recurse -Filter "$name.exe" -ErrorAction SilentlyContinue |
@@ -58,7 +60,7 @@ function Find-SdkTool([string] $name) {
         if ($candidate) { return $candidate.FullName }
     }
 
-    # 2) Windows SDK 安装目录
+    # 2) Windows SDK install directory.
     foreach ($root in @("${env:ProgramFiles(x86)}\Windows Kits\10\bin", "$env:ProgramFiles\Windows Kits\10\bin")) {
         if (-not (Test-Path -LiteralPath $root)) { continue }
         $candidate = Get-ChildItem -LiteralPath $root -Recurse -Filter "$name.exe" -ErrorAction SilentlyContinue |
@@ -68,23 +70,23 @@ function Find-SdkTool([string] $name) {
         if ($candidate) { return $candidate.FullName }
     }
 
-    # 3) PATH
+    # 3) PATH.
     $command = Get-Command $name -ErrorAction SilentlyContinue
     if ($command) { return $command.Source }
 
-    throw "找不到 $name.exe：请安装 Windows SDK（或还原 Microsoft.Windows.SDK.BuildTools 包）。"
+    throw "Cannot find $name.exe: install the Windows SDK (or restore Microsoft.Windows.SDK.BuildTools)."
 }
 
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $publishScript = Join-Path $repoRoot 'BlockBox.SearchService\Publish-SearchService.ps1'
-Write-Host "发布服务：$publishScript"
+Write-Host "Publishing the service: $publishScript"
 & $publishScript
-if ($LASTEXITCODE -ne 0) { throw '服务发布失败。' }
+if ($LASTEXITCODE -ne 0) { throw 'Search service publish failed.' }
 
 $publishDirectory = Join-Path $repoRoot 'BlockBox.SearchService\publish\win-x64'
 $serviceExe = Join-Path $publishDirectory 'BlockBox.SearchService.exe'
 if (-not (Test-Path -LiteralPath $serviceExe)) {
-    throw "服务发布目录不完整：$serviceExe 不存在。"
+    throw "The publish folder is incomplete: $serviceExe is missing."
 }
 
 $layout = Join-Path $env:TEMP 'BlockBoxCompanionMsix\layout'
@@ -103,21 +105,21 @@ if (-not [string]::IsNullOrWhiteSpace($CertPath)) {
     $resolvedCert = (Resolve-Path -LiteralPath $CertPath).Path
     $certificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($resolvedCert, $CertPassword)
     if ($certificate.Subject -ne $Publisher) {
-        throw "Publisher 与证书主题不一致：证书是 '$($certificate.Subject)'，参数是 '$Publisher'。"
+        throw "Publisher does not match the certificate subject: '$($certificate.Subject)' vs '$Publisher'."
     }
     $sign = $true
 }
 elseif (-not [string]::IsNullOrWhiteSpace($CertThumbprint)) {
-    # USB 令牌 / 证书存储里的证书（私钥不能导出成 PFX 时用这个）
+    # Certificate in the store / on a USB token (private key cannot be exported to a PFX).
     $thumb = $CertThumbprint.Replace(' ', '')
     $certificate = Get-ChildItem Cert:\CurrentUser\My, Cert:\LocalMachine\My -ErrorAction SilentlyContinue |
         Where-Object { $_.Thumbprint -eq $thumb } |
         Select-Object -First 1
     if (-not $certificate) {
-        throw "在本机证书存储里找不到指纹为 $CertThumbprint 的证书。"
+        throw "No certificate with thumbprint $CertThumbprint was found in the local certificate stores."
     }
     if ($certificate.Subject -ne $Publisher) {
-        throw "Publisher 与证书主题不一致：证书是 '$($certificate.Subject)'，参数是 '$Publisher'。"
+        throw "Publisher does not match the certificate subject: '$($certificate.Subject)' vs '$Publisher'."
     }
     $sign = $true
 }
@@ -128,28 +130,28 @@ $msixPath = Join-Path $outputRoot "BlockBox.SearchService_${Version}_x64.msix"
 if (Test-Path -LiteralPath $msixPath) { Remove-Item -LiteralPath $msixPath -Force }
 
 $makeAppx = Find-SdkTool 'makeappx'
-Write-Host "打包：$makeAppx"
+Write-Host "Packing: $makeAppx"
 & $makeAppx pack /d $layout /p $msixPath /o
-if ($LASTEXITCODE -ne 0) { throw 'makeappx 打包失败。' }
+if ($LASTEXITCODE -ne 0) { throw 'makeappx failed.' }
 
 if ($sign) {
     $signTool = Find-SdkTool 'signtool'
-    Write-Host "签名：$signTool"
+    Write-Host "Signing: $signTool"
     if (-not [string]::IsNullOrWhiteSpace($CertThumbprint)) {
         & $signTool sign /fd SHA256 /sha1 ($CertThumbprint.Replace(' ', '')) $msixPath
     }
     else {
         & $signTool sign /fd SHA256 /f $resolvedCert /p $CertPassword $msixPath
     }
-    if ($LASTEXITCODE -ne 0) { throw 'signtool 签名失败。' }
+    if ($LASTEXITCODE -ne 0) { throw 'signtool failed.' }
 }
 else {
-    Write-Warning '未签名：只适合本机测试。正式分发请用 -CertPath 传入代码签名证书。'
+    Write-Warning 'Unsigned: local testing only. Pass -CertPath or -CertThumbprint for public distribution.'
 }
 
 Write-Host ''
-Write-Host "伴侣 MSIX 已生成：$msixPath"
-Write-Host '安装（会弹 UAC）：'
+Write-Host "Companion MSIX created: $msixPath"
+Write-Host 'Install (UAC prompt):'
 Write-Host "  Add-AppxPackage `"$msixPath`""
-Write-Host '卸载（服务随包删除）：'
+Write-Host 'Uninstall (the service is removed with the package):'
 Write-Host '  Get-AppxPackage BlockBox.SearchService | Remove-AppxPackage'

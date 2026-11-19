@@ -38,6 +38,25 @@
 `-Publisher` 必须与签名证书的 Subject 完全一致，否则安装时报
 `0x800B0109`（证书不受信任）或 `0x800B010B`（Publisher 不匹配）。
 
+## 零成本分发：zip + 脚本（不需要证书）
+
+没有代码签名证书时，用这个方式发布：
+
+```powershell
+.\installer\companion\Build-ServiceZip.ps1 -Version 1.0.0.0
+```
+
+产物：`installer\companion\out\BlockBox.SearchService_1.0.0.0_x64.zip`，包含服务程序、
+`Install-SearchService.ps1`、`Uninstall-SearchService.ps1` 和一份 `README.txt`。
+
+- 用户把 zip 上传到 GitHub Releases 后，在 Block Box 的搜索面板点「我已下载…」选择该 zip，
+  应用会解压到临时目录并提权运行安装脚本（会弹 UAC）；
+- 安装脚本会注册「设置 → 应用 → Block Box 搜索服务」的卸载项，用户可以单独卸载；
+- 卸载脚本默认保留索引数据，加 `-RemoveData` 可连数据一起删除。
+
+> 注意：`.ps1` 必须是纯 ASCII 或带 UTF-8 BOM。Windows PowerShell 5.1 会把无 BOM 的 UTF-8
+> 当作 ANSI 读取，中文会乱码甚至报“字符串缺少终止符”。本仓库的脚本已统一为 ASCII。
+
 ## 安装 / 卸载
 
 ```powershell
