@@ -17,21 +17,55 @@ $installDirectory = Join-Path $env:ProgramFiles 'BlockBox\SearchService'
 $dataDirectory = Join-Path $env:ProgramData 'BlockBox\Search'
 $uninstallEntry = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\BlockBox.SearchService'
 
-# 1) Stop and remove the service. A missing service makes sc return a non-zero code, which is fine here.
-& sc.exe stop $serviceName 2>$null | Out-Null
-Start-Sleep -Seconds 1
-& sc.exe delete $serviceName 2>$null | Out-Null
-$service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
-if ($null -ne $service) {
-    throw 'Could not remove BlockBoxGlobalSearch service.'
+function Remove-SearchService {
+    $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+    if ($null -eq $service) { return $true }
+
+    # 1) Ask the SCM to stop it and give it time to finish.
+    if ($service.Status -ne 'Stopped') {
+        & sc.exe stop $serviceName 2>$null | Out-Null
+        for ($i = 0; $i -lt 30; $i++) {
+            Start-Sleep -Seconds 1
+            $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+            if ($null -eq $service -or $service.Status -eq 'Stopped') { break }
+        }
+    }
+
+    # 2) Still stopping: terminate only the process the registration points at.
+    if ($service -and $service.Status -eq 'StopPending') {
+        $info = Get-CimInstance Win32_Service -Filter "Name='$serviceName'" -ErrorAction SilentlyContinue
+        if ($info -and $info.ProcessId -gt 0) {
+            try { Stop-Process -Id $info.ProcessId -Force -ErrorAction Stop } catch { }
+            Start-Sleep -Seconds 2
+        }
+    }
+
+    # 3) Delete the registration and wait until the SCM forgets about it.
+    & sc.exe delete $serviceName 2>$null | Out-Null
+    for ($i = 0; $i -lt 15; $i++) {
+        Start-Sleep -Seconds 1
+        $service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+        if ($null -eq $service) { return $true }
+    }
+
+    if ($service -and $service.Status -eq 'StopPending') {
+        Write-Warning ("$serviceName is stuck in STOP_PENDING (marked for deletion). " +
+            'Reboot Windows to finish removing it, then run this script again for the remaining cleanup.')
+    }
+    return $false
 }
 
-# 2) Remove the "Apps & features" uninstall entry.
+$removed = Remove-SearchService
+if (-not $removed) {
+    Write-Warning 'The service registration could not be removed yet; continuing with the remaining cleanup.'
+}
+
+# Remove the "Apps & features" uninstall entry.
 if (Test-Path -LiteralPath $uninstallEntry) {
     Remove-Item -LiteralPath $uninstallEntry -Recurse -Force
 }
 
-# 3) Optionally delete the index data.
+# Optionally delete the index data.
 if ($RemoveData) {
     if (Test-Path -LiteralPath $dataDirectory) {
         Remove-Item -LiteralPath $dataDirectory -Recurse -Force -ErrorAction SilentlyContinue
@@ -42,8 +76,8 @@ else {
     Write-Host "Search index data was kept: $dataDirectory"
 }
 
-# 4) Delete the install directory. This script may be running from that directory, so let a
-#    short-delayed cmd clean it up after PowerShell exits.
+# Delete the install directory. This script may be running from that directory, so let a
+# short-delayed cmd clean it up after PowerShell exits.
 $runningFromInstallDirectory = $PSScriptRoot -and
     [string]::Equals((Resolve-Path -LiteralPath $PSScriptRoot).Path, $installDirectory, [StringComparison]::OrdinalIgnoreCase)
 if (-not $KeepFiles -and $runningFromInstallDirectory) {

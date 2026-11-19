@@ -6,10 +6,12 @@ internal static class Program
 {
     private const string ServiceName = "BlockBoxGlobalSearch";
     private const int StoreOpenAttempts = 3;
+    private const int StopTimeoutSeconds = 15;
     private static readonly ServiceMainDelegate ServiceMainRoot = ServiceMain;
     private static readonly HandlerDelegate HandlerRoot = ServiceHandler;
     private static readonly ManualResetEventSlim StopSignal = new(false);
     private static CancellationTokenSource? _stop;
+    private static int _stopRequested;
     private static IntPtr _statusHandle;
     private static ServiceStatus _status;
 
@@ -49,9 +51,20 @@ internal static class Program
     {
         if (control == 1) // SERVICE_CONTROL_STOP
         {
-            SetStatus(ServiceState.StopPending, 5000U);
+            SetStatus(ServiceState.StopPending, StopTimeoutSeconds * 1000U);
             _stop?.Cancel();
             StopSignal.Set();
+
+            // 兜底：某个后台任务如果没有及时响应取消（例如正在做一次同步的 MFT 枚举），
+            // 到时间就直接结束进程，避免服务永远停在 STOP_PENDING（删除服务也会跟着卡住）。
+            if (Interlocked.Exchange(ref _stopRequested, 1) == 0)
+            {
+                ThreadPool.QueueUserWorkItem(_ =>
+                {
+                    Thread.Sleep(StopTimeoutSeconds * 1000);
+                    Environment.Exit(0);
+                });
+            }
         }
         return 0;
     }
