@@ -73,6 +73,15 @@ namespace BlockBox.Helpers
             window.AppWindow.Move(new PointInt32(x, y));
         }
 
+        /// <summary>只建立“所有者”关系（窗口跟随主窗体、不上任务栏），**不禁用主窗体**，用于非模态对话框。</summary>
+        public static void SetOwner(Window owner, Window window)
+        {
+            IntPtr ownerHandle = WinRT.Interop.WindowNative.GetWindowHandle(owner);
+            IntPtr windowHandle = WinRT.Interop.WindowNative.GetWindowHandle(window);
+            if (ownerHandle == IntPtr.Zero || windowHandle == IntPtr.Zero) return;
+            SetWindowLongPtr(windowHandle, GwlHwndParent, ownerHandle);
+        }
+
         public static void ShowModal(Window owner, Window window, Action? closed = null)
         {
             IntPtr ownerHandle = WinRT.Interop.WindowNative.GetWindowHandle(owner);

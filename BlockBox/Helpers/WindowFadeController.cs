@@ -2,8 +2,6 @@ using Microsoft.UI.Composition;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Hosting;
-using Microsoft.UI.Xaml.Media;
-using Microsoft.UI.Xaml.Media.Animation;
 using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
@@ -61,100 +59,6 @@ namespace BlockBox.Helpers
 
         public static void FadeIn(Window window, TimeSpan? duration = null)
             => Start(window, 0, 255, duration ?? TimeSpan.FromMilliseconds(360), null);
-
-        /// <summary>
-        /// 只让窗口内容做透明度+缩放入场，**不动 HWND 的分层属性**。
-        /// <para>
-        /// 对话框（亚克力背景 + 普通控件）如果对整个 HWND 逐帧 SetLayeredWindowAttributes，
-        /// 每一帧都会强制整窗重新合成，指针悬停/焦点状态会跟着反复重算，表现为按钮一闪一闪。
-        /// 内容级动画没有这个问题，视觉上也几乎看不出差别。
-        /// </para>
-        /// </summary>
-        public static void FadeContentIn(FrameworkElement root, TimeSpan? duration = null)
-        {
-            var animationDuration = duration ?? TimeSpan.FromMilliseconds(200);
-            try
-            {
-                root.Opacity = 0;
-                // 用 RenderTransformOrigin 居中缩放：Loaded 时 ActualWidth 可能还是 0，
-                // 用 CenterX/CenterY 会把缩放中心算到左上角，看上去是从角上弹出。
-                root.RenderTransformOrigin = new Windows.Foundation.Point(0.5, 0.5);
-                var transform = new CompositeTransform
-                {
-                    ScaleX = 0.97,
-                    ScaleY = 0.97
-                };
-                root.RenderTransform = transform;
-
-                var storyboard = new Storyboard();
-                var fade = new DoubleAnimation
-                {
-                    From = 0,
-                    To = 1,
-                    Duration = new Duration(animationDuration),
-                    EnableDependentAnimation = true
-                };
-                Storyboard.SetTarget(fade, root);
-                Storyboard.SetTargetProperty(fade, "Opacity");
-                storyboard.Children.Add(fade);
-
-                foreach (string property in new[] { "ScaleX", "ScaleY" })
-                {
-                    var scale = new DoubleAnimation
-                    {
-                        From = 0.97,
-                        To = 1,
-                        Duration = new Duration(animationDuration),
-                        EnableDependentAnimation = true
-                    };
-                    Storyboard.SetTarget(scale, transform);
-                    Storyboard.SetTargetProperty(scale, property);
-                    storyboard.Children.Add(scale);
-                }
-
-                storyboard.Begin();
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[窗口内容渐入] 动画失败: {ex}");
-                root.Opacity = 1;
-            }
-        }
-
-        /// <summary>
-        /// 内容渐出后关闭窗口。和 <see cref="FadeContentIn"/> 对称，不触碰 HWND 分层属性。
-        /// </summary>
-        public static Task FadeContentOutAsync(Window window, FrameworkElement root, TimeSpan? duration = null)
-        {
-            var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            try
-            {
-                var storyboard = new Storyboard();
-                var fade = new DoubleAnimation
-                {
-                    From = root.Opacity,
-                    To = 0,
-                    Duration = new Duration(duration ?? TimeSpan.FromMilliseconds(180)),
-                    EnableDependentAnimation = true
-                };
-                Storyboard.SetTarget(fade, root);
-                Storyboard.SetTargetProperty(fade, "Opacity");
-                storyboard.Children.Add(fade);
-                storyboard.Completed += (_, _) =>
-                {
-                    completion.TrySetResult();
-                    window.Close();
-                };
-                storyboard.Begin();
-            }
-            catch (Exception ex)
-            {
-                Debug.WriteLine($"[窗口内容渐出] 动画失败: {ex}");
-                completion.TrySetResult();
-                window.Close();
-            }
-            return completion.Task;
-        }
 
         public static void FadeAndScaleIn(Window window, FrameworkElement root, TimeSpan? duration = null)
         {

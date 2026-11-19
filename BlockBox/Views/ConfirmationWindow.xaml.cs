@@ -38,6 +38,7 @@ namespace BlockBox.Views
             Result = defaultResult;
 
             ModalWindowHelper.ConfigureBorderlessWindow(this);
+            WindowFadeController.Prepare(this);
             RootGrid.Loaded += RootGrid_Loaded;
         }
 
@@ -64,27 +65,26 @@ namespace BlockBox.Views
             {
                 System.Diagnostics.Debug.WriteLine($"[确认窗口] 尺寸调整失败: {ex}");
             }
-            // 内容级入场动画：不动 HWND 分层属性，避免亚克力窗口逐帧合成导致的
-            // 悬停/焦点闪烁（关闭时仍走缩小淡出的整体动画）。
-            WindowFadeController.FadeContentIn(RootGrid);
+            // 和回收站窗口一致的整窗淡入+缩放（Prepare 预置透明度，不会先闪白底）。
+            WindowFadeController.FadeAndScaleIn(this, RootGrid);
         }
 
         private void PrimaryButton_Click(object sender, RoutedEventArgs e)
         {
             Result = 1;
-            _ = WindowFadeController.FadeContentOutAsync(this, RootGrid);
+            WindowFadeController.CloseWithAnimation(this);
         }
 
         private void SecondaryButton_Click(object sender, RoutedEventArgs e)
         {
             Result = 2;
-            _ = WindowFadeController.FadeContentOutAsync(this, RootGrid);
+            WindowFadeController.CloseWithAnimation(this);
         }
 
         private void CancelButton_Click(object sender, RoutedEventArgs e)
         {
             Result = 0;
-            _ = WindowFadeController.FadeContentOutAsync(this, RootGrid);
+            WindowFadeController.CloseWithAnimation(this);
         }
     }
 }

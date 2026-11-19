@@ -34,10 +34,30 @@ namespace BlockBox.Services
             }
         }
 
-        internal static async Task ShowFeedbackAsync(Window owner)
+        private static FeedbackWindow? _feedbackWindow;
+
+        /// <summary>
+        /// 反馈窗口用**非模态**方式打开：只建立所有者关系、不禁用主窗体。
+        /// 这样它既能保持回收站窗口同款的整窗淡入淡出，又不会因为模态禁用主窗体
+        /// 而在淡入期间出现悬停/焦点状态抖动。
+        /// </summary>
+        internal static Task ShowFeedbackAsync(Window owner)
         {
+            if (_feedbackWindow is not null)
+            {
+                _feedbackWindow.Activate();
+                return Task.CompletedTask;
+            }
+
             var window = new FeedbackWindow();
-            await ModalWindowHelper.ShowModalAsync(owner, window);
+            _feedbackWindow = window;
+            window.Closed += (_, _) =>
+            {
+                if (ReferenceEquals(_feedbackWindow, window)) _feedbackWindow = null;
+            };
+            ModalWindowHelper.SetOwner(owner, window);
+            window.Activate();
+            return Task.CompletedTask;
         }
 
         private static async Task InstallAsync(Window owner)

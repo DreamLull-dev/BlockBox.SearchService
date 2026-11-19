@@ -3,7 +3,7 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="">
-<Grid x:Name="RootGrid" Padding="24" RowSpacing="16" Opacity="0" Loaded="RootGrid_Loaded">
+<Grid x:Name="RootGrid" Padding="24" RowSpacing="16" Loaded="RootGrid_Loaded">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
