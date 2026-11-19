@@ -15,10 +15,11 @@
                     BorderBrush="#40FFFFFF"
                     Background="#14FFFFFF" Padding="8,0">
                 <Grid>
-                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                     <FontIcon Grid.Column="0" Glyph="&#xE721;" FontSize="14" VerticalAlignment="Center" Margin="0,0,8,0"
                               Foreground="{ThemeResource TextFillColorPrimaryBrush}"/>
                     <TextBox x:Name="QueryBox" Grid.Column="1" PlaceholderText="搜索..." TextChanged="QueryBox_TextChanged"
+                             KeyDown="QueryBox_KeyDown"
                              Style="{StaticResource NoClearButtonTextBoxStyle}"
                              BorderThickness="0" Background="Transparent" Padding="0" VerticalAlignment="Center"
                              Foreground="{ThemeResource TextFillColorPrimaryBrush}"
@@ -34,8 +35,13 @@
                             <SolidColorBrush x:Key="TextControlBorderBrushDisabled" Color="Transparent"/>
                         </TextBox.Resources>
                     </TextBox>
-                    <Button x:Name="ClearSearchButton" Grid.Column="2" Width="22" Height="22" Padding="0"
-                            Margin="4,0,0,0" Background="Transparent" BorderThickness="0" CornerRadius="11"
+                    <Button x:Name="HistoryButton" Grid.Column="2" Width="22" Height="22" Padding="0"
+                            Margin="0,0,2,0" Background="Transparent" BorderThickness="0" CornerRadius="11"
+                            VerticalAlignment="Center" Click="HistoryButton_Click" ToolTipService.ToolTip="搜索历史">
+                        <FontIcon Glyph="&#xE81C;" FontSize="12" Foreground="{ThemeResource TextFillColorPrimaryBrush}"/>
+                    </Button>
+                    <Button x:Name="ClearSearchButton" Grid.Column="3" Width="22" Height="22" Padding="0"
+                            Margin="2,0,0,0" Background="Transparent" BorderThickness="0" CornerRadius="11"
                             VerticalAlignment="Center" Click="ClearSearch_Click" ToolTipService.ToolTip="清空">
                         <FontIcon Glyph="&#xE711;" FontSize="11" Foreground="{ThemeResource TextFillColorPrimaryBrush}"/>
                     </Button>
@@ -57,6 +63,7 @@
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                 Background="#2AFFFFFF">
         <ListView x:Name="ResultsList" SelectionMode="None" IsItemClickEnabled="False" Loaded="ResultsList_Loaded" ContainerContentChanging="ResultsList_ContainerContentChanging"
+                  KeyDown="ResultsList_KeyDown"
                   RightTapped="ResultsList_RightTapped" DoubleTapped="ResultsList_DoubleTapped"
                   Background="Transparent" BorderThickness="0" CornerRadius="8">
             <ListView.ItemContainerStyle>

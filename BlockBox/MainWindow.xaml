@@ -563,6 +563,7 @@
                                         Margin="0,0,7,0" BorderThickness="0.6"
                                         Background="#14FFFFFF"
                                         Foreground="{ThemeResource TextFillColorTabBarBrush}"
+                                        AutomationProperties.Name="{x:Bind helpers:LanguageService.Translate('全局搜索'), Mode=OneWay}"
                                         ToolTipService.ToolTip="{x:Bind helpers:LanguageService.Translate('全局搜索'), Mode=OneWay}"
                                         Click="SearchLauncher_Click">
                                     <FontIcon Glyph="&#xE721;" FontSize="13"/>

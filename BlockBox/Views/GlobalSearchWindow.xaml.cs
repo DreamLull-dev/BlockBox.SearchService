@@ -8,6 +8,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Input;
 using System;
@@ -82,6 +83,10 @@ namespace BlockBox.Views
             RootGrid.Loaded += RootGrid_Loaded;
             WindowFadeController.Prepare(this);
             ToolTipService.SetToolTip(QuickAddButton, LanguageService.Translate("添加到当前分类"));
+            ToolTipService.SetToolTip(HistoryButton, LanguageService.Translate("搜索历史"));
+            AutomationProperties.SetName(QuickAddButton, LanguageService.Translate("添加到当前分类"));
+            AutomationProperties.SetName(HistoryButton, LanguageService.Translate("搜索历史"));
+            AutomationProperties.SetName(ClearSearchButton, LanguageService.Translate("清空"));
             if (App.MainWindow is MainWindow shell)
             {
                 shell.CurrentCategoryChanged += CurrentCategoryChanged;
@@ -208,6 +213,104 @@ namespace BlockBox.Views
         public void RefreshPositionBesideMainWindow() => PositionBesideMainWindow();
 
         private void QueryBox_TextChanged(object sender, TextChangedEventArgs e) => Search();
+
+        private void QueryBox_KeyDown(object sender, KeyRoutedEventArgs e)
+        {
+            if (e.Key != Windows.System.VirtualKey.Enter) return;
+            e.Handled = true;
+            if (!string.IsNullOrWhiteSpace(QueryBox.Text)) SearchHistoryStore.Add(QueryBox.Text);
+            Search();
+        }
+
+        /// <summary>搜索历史下拉：点选一条直接填入并搜索。</summary>
+        private void HistoryButton_Click(object sender, RoutedEventArgs e)
+        {
+            IReadOnlyList<string> entries = SearchHistoryStore.Get();
+            var flyout = new Flyout();
+            var panel = new StackPanel { Width = 260, Spacing = 0 };
+
+            if (entries.Count == 0)
+            {
+                panel.Children.Add(new TextBlock
+                {
+                    Text = LanguageService.Translate("暂无搜索历史"),
+                    Margin = new Thickness(12, 10, 12, 10),
+                    Opacity = 0.7
+                });
+            }
+            else
+            {
+                foreach (string entry in entries)
+                {
+                    string query = entry;
+                    var button = new Button
+                    {
+                        Content = query,
+                        Width = 260,
+                        Height = 34,
+                        Padding = new Thickness(12, 0, 8, 0),
+                        CornerRadius = new CornerRadius(8),
+                        HorizontalContentAlignment = HorizontalAlignment.Left,
+                        VerticalContentAlignment = VerticalAlignment.Center,
+                        Foreground = (Brush)Application.Current.Resources["TextFillColorTabBarBrush"],
+                        Style = (Style)Application.Current.Resources["MenuItemButtonStyle"]
+                    };
+                    LanguageService.ApplyGeneratedButtonSize(button);
+                    button.Width = 260;
+                    button.Height = 34;
+                    button.Click += (_, _) =>
+                    {
+                        flyout.Hide();
+                        QueryBox.Text = query;
+                        QueryBox.SelectionStart = query.Length;
+                        SearchHistoryStore.Add(query);
+                        Search();
+                    };
+                    panel.Children.Add(button);
+                }
+
+                panel.Children.Add(new Microsoft.UI.Xaml.Shapes.Rectangle
+                {
+                    Height = 1,
+                    Margin = new Thickness(8, 4, 8, 4),
+                    Fill = (Brush)Application.Current.Resources["DividerStrokeColorDefaultBrush"]
+                });
+                var clear = new Button
+                {
+                    Content = LanguageService.Translate("清空历史"),
+                    Width = 260,
+                    Height = 34,
+                    Padding = new Thickness(12, 0, 8, 0),
+                    CornerRadius = new CornerRadius(8),
+                    HorizontalContentAlignment = HorizontalAlignment.Left,
+                    VerticalContentAlignment = VerticalAlignment.Center,
+                    Foreground = (Brush)Application.Current.Resources["TextFillColorTabBarBrush"],
+                    Style = (Style)Application.Current.Resources["MenuItemButtonStyle"]
+                };
+                LanguageService.ApplyGeneratedButtonSize(clear);
+                clear.Width = 260;
+                clear.Height = 34;
+                clear.Click += (_, _) =>
+                {
+                    flyout.Hide();
+                    SearchHistoryStore.Clear();
+                };
+                panel.Children.Add(clear);
+            }
+
+            flyout.Content = panel;
+            flyout.FlyoutPresenterStyle = App.MainWindow is MainWindow main
+                ? main.CreateModeFlyoutPresenterStyle()
+                : new Style(typeof(FlyoutPresenter));
+            flyout.ShouldConstrainToRootBounds = false;
+            LanguageService.RegisterDynamicRoot(panel);
+            flyout.ShowAt(HistoryButton, new FlyoutShowOptions
+            {
+                Position = new Windows.Foundation.Point(0, HistoryButton.ActualHeight),
+                Placement = FlyoutPlacementMode.BottomEdgeAlignedLeft,
+                ShowMode = FlyoutShowMode.Standard
+            });
+        }
 
         private async void SortButton_Click(object sender, RoutedEventArgs e)
         {
@@ -468,8 +571,75 @@ namespace BlockBox.Views
 
         private void ResultRow_Tapped(object sender, TappedRoutedEventArgs e)
         {
-            if (GetSearchResultItem(e.OriginalSource) is { } item)
-                HighlightResult(item);
+            if (GetSearchResultItem(e.OriginalSource) is not { } item) return;
+            HighlightResult(item);
+            // 鼠标点过一行后把焦点交给列表，方向键/Enter 能接着用。
+            ResultsList.Focus(FocusState.Programmatic);
+        }
+
+        private void ResultsList_KeyDown(object sender, KeyRoutedEventArgs e)
+        {
+            if (Results.Count == 0) return;
+
+            switch (e.Key)
+            {
+                case Windows.System.VirtualKey.Up:
+                case Windows.System.VirtualKey.Down:
+                {
+                    int current = _highlightedResult is null ? -1 : Results.IndexOf(_highlightedResult);
+                    int next = e.Key == Windows.System.VirtualKey.Down
+                        ? Math.Min(Results.Count - 1, current + 1)
+                        : Math.Max(0, current - 1);
+                    if (next < 0 || next >= Results.Count) return;
+                    HighlightResult(Results[next]);
+                    ResultsList.ScrollIntoView(Results[next]);
+                    e.Handled = true;
+                    return;
+                }
+                case Windows.System.VirtualKey.Enter:
+                    if (_highlightedResult is { } open)
+                    {
+                        e.Handled = true;
+                        _ = OpenSearchResultAsync(open);
+                    }
+                    return;
+                case Windows.System.VirtualKey.Space:
+                    if (_highlightedResult is { } check)
+                    {
+                        check.IsChecked = check.IsChecked != true;
+                        UpdateAddButtonState();
+                        e.Handled = true;
+                    }
+                    return;
+                case Windows.System.VirtualKey.Delete:
+                    if (_highlightedResult is { } delete)
+                    {
+                        e.Handled = true;
+                        _ = DeleteSearchResultsAsync(delete);
+                    }
+                    return;
+                case Windows.System.VirtualKey.C:
+                    if (_highlightedResult is { } copy && IsControlDown())
+                    {
+                        e.Handled = true;
+                        _ = CopySelectionToClipboardAsync(copy, move: false);
+                    }
+                    return;
+            }
+        }
+
+        private static bool IsControlDown()
+        {
+            try
+            {
+                return InputKeyboardSource
+                    .GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control)
+                    .HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private void HighlightResult(SearchResultItem item)
@@ -687,6 +857,8 @@ namespace BlockBox.Views
 
         private async Task OpenSearchResultAsync(SearchResultItem item)
         {
+            // 用户真正打开结果说明这次查询有意义，记进搜索历史。
+            if (!string.IsNullOrWhiteSpace(_activeQuery)) SearchHistoryStore.Add(_activeQuery);
             if (!File.Exists(item.Path) && !Directory.Exists(item.Path))
             {
                 StatusText.Text = LanguageService.Translate("文件已不存在");
