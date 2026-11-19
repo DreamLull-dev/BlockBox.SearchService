@@ -1,0 +1,531 @@
+using System.Text;
+
+namespace BlockBox.SearchService;
+
+/// <summary>
+/// Everything-style in-memory index. File names live in two flat pools (UTF-16 for display,
+/// ASCII-folded UTF-8 for matching) and every query is a scan over those arrays: no SQLite,
+/// no file-system calls, and paths are rebuilt from parent references only for the rows that
+/// are actually returned.
+/// </summary>
+internal sealed class SearchCatalog
+{
+    private const uint FileCreate = 0x00000100;
+    private const uint FileDelete = 0x00000200;
+    private const uint RenameOldName = 0x00001000;
+    private const uint RenameNewName = 0x00002000;
+    private const uint BasicInfoChange = 0x00008000;
+
+    private static readonly byte[][] ApplicationExtensions = Extensions(".exe", ".lnk", ".url", ".bat", ".cmd", ".msi");
+    private static readonly byte[][] ImageExtensions = Extensions(".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".ico", ".tif", ".tiff");
+    private static readonly byte[][] AudioExtensions = Extensions(".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".wma");
+    private static readonly byte[][] VideoExtensions = Extensions(".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v");
+    private static readonly byte[][] ArchiveExtensions = Extensions(".zip", ".rar", ".7z", ".tar", ".gz");
+    private static readonly byte[][] NoExtensions = Array.Empty<byte[]>();
+
+    private readonly object _sync = new();
+    private readonly Dictionary<string, VolumeIndex> _volumes = new(StringComparer.Ordinal);
+
+    /// <summary>Starts a full rebuild: the previous in-memory contents of the volume are dropped.</summary>
+    internal void BeginVolume(string volumeId, string rootPath)
+    {
+        lock (_sync) _volumes[volumeId] = new VolumeIndex(volumeId, rootPath, "Indexing", 0, 0);
+    }
+
+    /// <summary>Rebuilds a volume from its durable snapshot. Runs before queries are served.</summary>
+    internal void LoadVolume(string volumeId, string rootPath, string state, int count, long characters,
+        IEnumerable<(long FileId, long ParentId, string Name, bool IsDirectory)> entries)
+    {
+        var volume = new VolumeIndex(volumeId, rootPath, state, count, characters);
+        foreach (var entry in entries)
+            volume.Upsert(entry.FileId, entry.ParentId, entry.Name, entry.IsDirectory);
+        lock (_sync) _volumes[volumeId] = volume;
+    }
+
+    internal void AddBatch(string volumeId, IReadOnlyCollection<MftEntry> entries)
+    {
+        if (entries.Count == 0) return;
+        lock (_sync)
+        {
+            VolumeIndex volume = GetOrCreate(volumeId);
+            foreach (MftEntry entry in entries)
+                volume.Upsert(entry.FileReference, entry.ParentReference, entry.Name, entry.IsDirectory);
+            volume.MaybeCompact();
+        }
+    }
+
+    internal void ApplyJournal(string volumeId, JournalReadResult batch)
+    {
+        lock (_sync)
+        {
+            VolumeIndex volume = GetOrCreate(volumeId);
+            foreach (JournalEntry entry in batch.Entries)
+            {
+                // Mirrors the durable store: FILE_DELETE and RENAME_OLD_NAME invalidate exactly
+                // this hard-link name; create, rename-new and basic-info changes upsert.
+                if ((entry.Reason & (FileDelete | RenameOldName)) != 0)
+                    volume.Delete(entry.FileReference, entry.Name);
+                if ((entry.Reason & (FileCreate | RenameNewName | BasicInfoChange)) != 0)
+                    volume.Upsert(entry.FileReference, entry.ParentReference, entry.Name, entry.IsDirectory);
+            }
+            volume.MaybeCompact();
+        }
+    }
+
+    internal void SetState(string volumeId, string state)
+    {
+        lock (_sync)
+        {
+            if (_volumes.TryGetValue(volumeId, out VolumeIndex? volume)) volume.State = state;
+        }
+    }
+
+    /// <summary>
+    /// Returns at most <paramref name="limit"/> hits in (exact-match, name, volume, file id) order.
+    /// An empty query lists everything (Everything's "show all files" mode), and candidates are
+    /// filtered by the cursor while scanning so a later page does not re-sort earlier pages.
+    /// <paramref name="descending"/> reverses the name/volume/file-id part of that order while
+    /// keeping exact matches first, so the client can append every page at the bottom.
+    /// </summary>
+    internal List<SearchHit> Search(string query, string kind, int limit,
+        string? afterName, string? afterVolumeId, long? afterFileId, bool descending = false)
+    {
+        byte[] needle = SearchText.Fold(query);
+        byte[] exactPrefix = SearchText.Fold(query + ".");
+        byte[][] extensions = ExtensionsFor(kind);
+        bool hasCursor = afterName is not null && afterVolumeId is not null && afterFileId is not null;
+        Cursor cursor = default;
+        if (hasCursor)
+        {
+            byte[] afterFolded = SearchText.Fold(afterName!);
+            byte rank = needle.Length == 0 || SearchText.IsExactMatch(afterFolded, needle, exactPrefix)
+                ? (byte)0 : (byte)1;
+            cursor = new Cursor(afterName!, afterFolded, afterVolumeId!, afterFileId!.Value, rank, descending);
+        }
+
+        var matches = new MatchBuffer(limit + 1, new MatchComparer(descending));
+        lock (_sync)
+        {
+            foreach (VolumeIndex volume in _volumes.Values)
+            {
+                if (!string.Equals(volume.State, "Ready", StringComparison.Ordinal)) continue;
+                volume.Collect(needle, exactPrefix, extensions, cursor, hasCursor, matches);
+            }
+            List<Match> selected = matches.Drain();
+            var results = new List<SearchHit>(selected.Count);
+            foreach (Match match in selected) results.Add(match.Volume.CreateHit(match.Index));
+            return results;
+        }
+    }
+
+    /// <summary>
+    /// Keeps only the smallest <c>capacity</c> matches seen so far. Broad queries can match
+    /// hundreds of thousands of rows, so the page is selected while scanning instead of
+    /// materialising and sorting every hit.
+    /// </summary>
+    internal sealed class MatchBuffer
+    {
+        private readonly IComparer<Match> _comparer;
+        private readonly PriorityQueue<Match, Match> _heap;
+        private readonly int _capacity;
+
+        internal MatchBuffer(int capacity, IComparer<Match> comparer)
+        {
+            _capacity = Math.Max(capacity, 1);
+            _comparer = comparer;
+            // The heap is a max-heap under the display order, so its root is the row that would
+            // be dropped first when a better one arrives.
+            _heap = new PriorityQueue<Match, Match>(_capacity,
+                Comparer<Match>.Create((left, right) => comparer.Compare(right, left)));
+        }
+
+        internal void Add(in Match match)
+        {
+            if (_heap.Count < _capacity) { _heap.Enqueue(match, match); return; }
+            // The heap root is the worst row currently kept; anything that does not beat it is
+            // dropped before it can grow an intermediate result set.
+            if (_comparer.Compare(match, _heap.Peek()) >= 0) return;
+            _heap.Dequeue();
+            _heap.Enqueue(match, match);
+        }
+
+        internal List<Match> Drain()
+        {
+            var items = new List<Match>(_heap.Count);
+            while (_heap.TryDequeue(out Match item, out _)) items.Add(item);
+            items.Sort(_comparer);
+            return items;
+        }
+    }
+
+    private VolumeIndex GetOrCreate(string volumeId)
+    {
+        if (_volumes.TryGetValue(volumeId, out VolumeIndex? volume)) return volume;
+        volume = new VolumeIndex(volumeId, string.Empty, "Indexing", 0, 0);
+        _volumes[volumeId] = volume;
+        return volume;
+    }
+
+    private static byte[][] ExtensionsFor(string kind) => kind switch
+    {
+        "application" => ApplicationExtensions,
+        "image" => ImageExtensions,
+        "audio" => AudioExtensions,
+        "video" => VideoExtensions,
+        "archive" => ArchiveExtensions,
+        _ => NoExtensions
+    };
+
+    private static byte[][] Extensions(params string[] values)
+    {
+        var folded = new byte[values.Length][];
+        for (int i = 0; i < values.Length; i++) folded[i] = SearchText.Fold(values[i]);
+        return folded;
+    }
+
+    internal readonly struct Match(VolumeIndex volume, int index, byte rank)
+    {
+        internal VolumeIndex Volume { get; } = volume;
+        internal int Index { get; } = index;
+        internal byte Rank { get; } = rank;
+    }
+
+    private sealed class MatchComparer(bool descending) : IComparer<Match>
+    {
+        public int Compare(Match x, Match y) =>
+            VolumeIndex.CompareEntries(x.Volume, x.Index, x.Rank, y.Volume, y.Index, y.Rank, descending);
+    }
+
+    internal readonly struct Cursor
+    {
+        private readonly byte _rank;
+        private readonly byte[] _folded;
+        private readonly string _volumeId;
+        private readonly long _fileId;
+        private readonly string _name;
+        private readonly bool _descending;
+
+        internal Cursor(string name, byte[] folded, string volumeId, long fileId, byte rank, bool descending)
+        {
+            _name = name;
+            _folded = folded;
+            _volumeId = volumeId;
+            _fileId = fileId;
+            _rank = rank;
+            _descending = descending;
+        }
+
+        /// <summary>Positive when the candidate sorts after the cursor.</summary>
+        internal int Compare(VolumeIndex volume, int index, byte rank)
+        {
+            int result = rank.CompareTo(_rank);
+            if (result != 0) return result;
+            result = volume.GetFold(index).SequenceCompareTo(_folded);
+            if (result != 0) return _descending ? -result : result;
+            result = string.CompareOrdinal(volume.VolumeId, _volumeId);
+            if (result != 0) return _descending ? -result : result;
+            result = volume.GetFileId(index).CompareTo(_fileId);
+            if (result != 0) return _descending ? -result : result;
+            result = volume.GetName(index).SequenceCompareTo(_name);
+            return _descending ? -result : result;
+        }
+    }
+}
+
+/// <summary>
+/// One volume's index: file names in flat pools plus one 40-byte record per hard-link name.
+/// Entries are append-only; deletions are tombstoned and compacted away in bulk so a USN
+/// burst never has to shift megabytes of memory.
+/// </summary>
+internal sealed class VolumeIndex
+{
+    /// <summary>Compact record. 40 bytes: two ids, two name slices and a hard-link chain link.</summary>
+    private struct Entry
+    {
+        public long FileId;
+        public long ParentId;
+        public int NameOffset;
+        public int NameLength;
+        public int FoldOffset;
+        public int FoldLength;
+        public int NextSibling;
+        public bool IsDirectory;
+        public bool Deleted;
+    }
+
+    private const int CompactThreshold = 65536;
+
+    private Entry[] _entries;
+    private int _count;
+    private int _deleted;
+    private char[] _names;
+    private int _nameUsed;
+    private byte[] _foldedNames;
+    private int _foldedUsed;
+    private Dictionary<long, int> _heads;
+
+    internal string VolumeId { get; }
+    internal string RootPath { get; }
+    internal string State { get; set; }
+
+    internal VolumeIndex(string volumeId, string rootPath, string state, int capacity, long characters)
+    {
+        VolumeId = volumeId;
+        RootPath = rootPath;
+        State = state;
+        capacity = Math.Max(capacity, 4);
+        _entries = new Entry[capacity];
+        _heads = new Dictionary<long, int>(capacity);
+        int nameCapacity = (int)Math.Clamp(characters + characters / 8, 256, int.MaxValue - 64);
+        _names = new char[nameCapacity];
+        // UTF-8 of a mostly-ASCII name is about as long as its UTF-16 form, so this skips the
+        // repeated doubling (and the temporary garbage) that a 1 MB seed would cause.
+        _foldedNames = new byte[Math.Clamp(characters, 256, int.MaxValue - 64)];
+    }
+
+    internal static int CompareEntries(VolumeIndex left, int leftIndex, byte leftRank,
+        VolumeIndex right, int rightIndex, byte rightRank, bool descending)
+    {
+        // Exact matches stay first in both directions; only the tie-breakers are reversed.
+        int result = leftRank.CompareTo(rightRank);
+        if (result != 0) return result;
+        result = left.GetFold(leftIndex).SequenceCompareTo(right.GetFold(rightIndex));
+        if (result != 0) return descending ? -result : result;
+        result = string.CompareOrdinal(left.VolumeId, right.VolumeId);
+        if (result != 0) return descending ? -result : result;
+        result = left.GetFileId(leftIndex).CompareTo(right.GetFileId(rightIndex));
+        if (result != 0) return descending ? -result : result;
+        result = left.GetName(leftIndex).SequenceCompareTo(right.GetName(rightIndex));
+        return descending ? -result : result;
+    }
+
+    /// <summary>Adds or refreshes one name of a file. A second name for the same file id is a hard link.</summary>
+    internal void Upsert(long fileId, long parentId, string name, bool isDirectory)
+    {
+        if (_heads.TryGetValue(fileId, out int head))
+        {
+            for (int entry = head; entry >= 0; entry = _entries[entry].NextSibling)
+            {
+                if (_entries[entry].Deleted || _entries[entry].NameLength != name.Length) continue;
+                if (!GetName(entry).SequenceEqual(name)) continue;
+                _entries[entry].ParentId = parentId;
+                _entries[entry].IsDirectory = isDirectory;
+                return;
+            }
+        }
+        Append(fileId, parentId, name, isDirectory);
+    }
+
+    internal void Delete(long fileId, string name)
+    {
+        if (!_heads.TryGetValue(fileId, out int entry)) return;
+        for (; entry >= 0; entry = _entries[entry].NextSibling)
+        {
+            if (_entries[entry].Deleted || _entries[entry].NameLength != name.Length) continue;
+            if (!GetName(entry).SequenceEqual(name)) continue;
+            _entries[entry].Deleted = true;
+            _deleted++;
+            return;
+        }
+    }
+
+    private void Append(long fileId, long parentId, string name, bool isDirectory)
+    {
+        if (_count == _entries.Length) Array.Resize(ref _entries, _entries.Length * 2);
+        EnsureNameCapacity(name.Length);
+        int nameOffset = _nameUsed;
+        name.CopyTo(0, _names, _nameUsed, name.Length);
+        _nameUsed += name.Length;
+
+        int foldLength = Encoding.UTF8.GetByteCount(name);
+        EnsureFoldedCapacity(foldLength);
+        int written = SearchText.FoldAsciiLower(name, _foldedNames.AsSpan(_foldedUsed, foldLength));
+        int foldOffset = _foldedUsed;
+        _foldedUsed += written;
+
+        int index = _count++;
+        _entries[index] = new Entry
+        {
+            FileId = fileId,
+            ParentId = parentId,
+            NameOffset = nameOffset,
+            NameLength = name.Length,
+            FoldOffset = foldOffset,
+            FoldLength = written,
+            NextSibling = _heads.TryGetValue(fileId, out int head) ? head : -1,
+            IsDirectory = isDirectory
+        };
+        _heads[fileId] = index;
+    }
+
+    private void EnsureNameCapacity(int additional)
+    {
+        if (_nameUsed + additional <= _names.Length) return;
+        int size = Math.Max(_names.Length * 2, _nameUsed + additional);
+        Array.Resize(ref _names, size);
+    }
+
+    private void EnsureFoldedCapacity(int additional)
+    {
+        if (_foldedUsed + additional <= _foldedNames.Length) return;
+        int size = Math.Max(_foldedNames.Length * 2, _foldedUsed + additional);
+        Array.Resize(ref _foldedNames, size);
+    }
+
+    /// <summary>Scans this volume in append order and offers every live match to the page buffer.</summary>
+    internal void Collect(ReadOnlySpan<byte> needle, ReadOnlySpan<byte> exactPrefix, byte[][] extensions,
+        in SearchCatalog.Cursor cursor, bool hasCursor, SearchCatalog.MatchBuffer matches)
+    {
+        Entry[] entries = _entries;
+        ReadOnlySpan<byte> pool = _foldedNames.AsSpan(0, _foldedUsed);
+        for (int i = 0; i < _count; i++)
+        {
+            ref Entry entry = ref entries[i];
+            if (entry.Deleted) continue;
+            // "Show everything" lists files only: folders (and the volume's "." record) are not
+            // what this panel offers for opening or adding to a category.
+            if (needle.Length == 0 && entry.IsDirectory) continue;
+            ReadOnlySpan<byte> folded = pool.Slice(entry.FoldOffset, entry.FoldLength);
+            if (folded.IndexOf(needle) < 0) continue;
+            // The kind filters only ever select files, matching the old SQL predicate.
+            if (extensions.Length != 0 && (entry.IsDirectory || !EndsWithAny(folded, extensions))) continue;
+            byte rank = needle.Length == 0 || SearchText.IsExactMatch(folded, needle, exactPrefix) ? (byte)0 : (byte)1;
+            if (hasCursor && cursor.Compare(this, i, rank) <= 0) continue;
+            matches.Add(new SearchCatalog.Match(this, i, rank));
+        }
+    }
+
+    private static bool EndsWithAny(ReadOnlySpan<byte> value, byte[][] extensions)
+    {
+        foreach (byte[] extension in extensions)
+            if (value.EndsWith(extension)) return true;
+        return false;
+    }
+
+    internal SearchHit CreateHit(int index)
+    {
+        ref Entry entry = ref _entries[index];
+        string name = GetName(index).ToString();
+        return new SearchHit(VolumeId, entry.FileId, entry.ParentId, name, BuildPath(index, name), entry.IsDirectory);
+    }
+
+    /// <summary>Rebuilds the full path by walking parent references; nothing is stored per entry.</summary>
+    private string BuildPath(int index, string name)
+    {
+        var segments = new List<string>(8) { name };
+        long parentId = _entries[index].ParentId;
+        for (int depth = 0; depth < 512; depth++)
+        {
+            if (!_heads.TryGetValue(parentId, out int parent)) break;
+            ref Entry entry = ref _entries[parent];
+            if (entry.Deleted || !entry.IsDirectory) break;
+            ReadOnlySpan<char> parentName = GetName(parent);
+            if (parentId == 5 || parentName.SequenceEqual(".")) break;
+            segments.Add(parentName.ToString());
+            parentId = entry.ParentId;
+        }
+        segments.Reverse();
+        return Path.Combine(new[] { RootPath }.Concat(segments).ToArray());
+    }
+
+    internal void MaybeCompact()
+    {
+        if (_deleted < CompactThreshold || _deleted * 4 < _count) return;
+        Compact();
+    }
+
+    private void Compact()
+    {
+        int live = _count - _deleted;
+        var entries = new Entry[Math.Max(4, live)];
+        var names = new char[Math.Max(256, _nameUsed)];
+        var folded = new byte[Math.Max(256, _foldedUsed)];
+        var heads = new Dictionary<long, int>(live);
+        int index = 0, nameOffset = 0, foldOffset = 0;
+        for (int i = 0; i < _count; i++)
+        {
+            ref Entry source = ref _entries[i];
+            if (source.Deleted) continue;
+            _names.AsSpan(source.NameOffset, source.NameLength).CopyTo(names.AsSpan(nameOffset));
+            _foldedNames.AsSpan(source.FoldOffset, source.FoldLength).CopyTo(folded.AsSpan(foldOffset));
+            entries[index] = new Entry
+            {
+                FileId = source.FileId,
+                ParentId = source.ParentId,
+                NameOffset = nameOffset,
+                NameLength = source.NameLength,
+                FoldOffset = foldOffset,
+                FoldLength = source.FoldLength,
+                NextSibling = heads.TryGetValue(source.FileId, out int head) ? head : -1,
+                IsDirectory = source.IsDirectory
+            };
+            heads[source.FileId] = index;
+            nameOffset += source.NameLength;
+            foldOffset += source.FoldLength;
+            index++;
+        }
+        _entries = entries;
+        _count = index;
+        _deleted = 0;
+        _names = names;
+        _nameUsed = nameOffset;
+        _foldedNames = folded;
+        _foldedUsed = foldOffset;
+        _heads = heads;
+    }
+
+    internal ReadOnlySpan<char> GetName(int index) =>
+        _names.AsSpan(_entries[index].NameOffset, _entries[index].NameLength);
+
+    internal ReadOnlySpan<byte> GetFold(int index) =>
+        _foldedNames.AsSpan(_entries[index].FoldOffset, _entries[index].FoldLength);
+
+    internal long GetFileId(int index) => _entries[index].FileId;
+}
+
+/// <summary>Folding shared by indexing and querying: ASCII lower-cased UTF-8, like SQLite's NOCASE.</summary>
+internal static class SearchText
+{
+    internal static byte[] Fold(string value)
+    {
+        byte[] buffer = new byte[value.Length * 3 + 4];
+        int length = FoldAsciiLower(value, buffer);
+        return buffer.AsSpan(0, length).ToArray();
+    }
+
+    internal static bool IsExactMatch(ReadOnlySpan<byte> folded, ReadOnlySpan<byte> needle, ReadOnlySpan<byte> exactPrefix) =>
+        folded.SequenceEqual(needle) || folded.StartsWith(exactPrefix);
+
+    internal static int FoldAsciiLower(ReadOnlySpan<char> source, Span<byte> destination)
+    {
+        int written = 0;
+        for (int i = 0; i < source.Length; i++)
+        {
+            char value = source[i];
+            if (value < '\u0080')
+            {
+                destination[written++] = (byte)(value is >= 'A' and <= 'Z' ? value + 32 : value);
+            }
+            else if (value < '\u0800')
+            {
+                destination[written++] = (byte)(0xC0 | (value >> 6));
+                destination[written++] = (byte)(0x80 | (value & 0x3F));
+            }
+            else if (char.IsHighSurrogate(value) && i + 1 < source.Length && char.IsLowSurrogate(source[i + 1]))
+            {
+                int codePoint = char.ConvertToUtf32(value, source[++i]);
+                destination[written++] = (byte)(0xF0 | (codePoint >> 18));
+                destination[written++] = (byte)(0x80 | ((codePoint >> 12) & 0x3F));
+                destination[written++] = (byte)(0x80 | ((codePoint >> 6) & 0x3F));
+                destination[written++] = (byte)(0x80 | (codePoint & 0x3F));
+            }
+            else
+            {
+                destination[written++] = (byte)(0xE0 | (value >> 12));
+                destination[written++] = (byte)(0x80 | ((value >> 6) & 0x3F));
+                destination[written++] = (byte)(0x80 | (value & 0x3F));
+            }
+        }
+        return written;
+    }
+}

@@ -1,0 +1,131 @@
+<Window
+    x:Class="BlockBox.Views.ProgramCategoryHistoryWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:helpers="using:BlockBox.Helpers">
+<Grid x:Name="RootGrid" Padding="20,30,20,20" RowSpacing="10" Loaded="RootGrid_Loaded"
+          helpers:FontSizeHelper.ApplyGlobalFontScale="True">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="42" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <TextBlock x:Name="HeaderText" FontSize="20" FontWeight="SemiBold" />
+        <Grid x:Name="TabBarGrid" Grid.Row="1" Height="36" CornerRadius="17" Padding="2" ColumnSpacing="4">
+            <Grid.Resources>
+                <Style x:Key="CategoryButtonStyle" TargetType="ToggleButton">
+                    <Setter Property="HorizontalAlignment" Value="Stretch" />
+                    <Setter Property="CornerRadius" Value="9" />
+                    <Setter Property="BorderThickness" Value="1" />
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="ToggleButton">
+                                <Grid Background="Transparent" >
+                                    <VisualStateManager.VisualStateGroups>
+                                        <VisualStateGroup x:Name="CommonStates">
+                                            <VisualState x:Name="Normal" />
+                                            <VisualState x:Name="PointerOver">
+                                                <VisualState.Setters><Setter Target="HoverOverlay.Opacity" Value="0.13" /></VisualState.Setters>
+                                            </VisualState>
+                                            <VisualState x:Name="Pressed">
+                                                <VisualState.Setters><Setter Target="HoverOverlay.Opacity" Value="0.22" /></VisualState.Setters>
+                                            </VisualState>
+                                            <VisualState x:Name="Disabled">
+                                                <VisualState.Setters><Setter Target="ButtonRoot.Opacity" Value="0.5" /></VisualState.Setters>
+                                            </VisualState>
+                                        </VisualStateGroup>
+                                    </VisualStateManager.VisualStateGroups>
+                                    <Border x:Name="ButtonRoot" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                            BorderThickness="0" CornerRadius="16">
+                                        <Grid>
+                                            <Border x:Name="HoverOverlay" 
+                                                    Height="32"
+                                                    Background="{TemplateBinding Foreground}" CornerRadius="16" Opacity="0" IsHitTestVisible="False" />
+                                            <ContentPresenter Content="{TemplateBinding Content}" Foreground="{TemplateBinding Foreground}"
+                                                              HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                        </Grid>
+                                    </Border>
+                                </Grid>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+            </Grid.Resources>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <ToggleButton x:Name="OfficeCategoryButton" Tag="办公" Style="{StaticResource CategoryButtonStyle}" Click="CategoryButton_Click">
+                <StackPanel Orientation="Horizontal" Spacing="8"><FontIcon Glyph="&#xE8A5;" FontSize="18"/><TextBlock x:Name="OfficeCategoryText" /></StackPanel>
+            </ToggleButton>
+            <ToggleButton x:Name="GamesCategoryButton" Grid.Column="1" Tag="游戏" Style="{StaticResource CategoryButtonStyle}" Click="CategoryButton_Click">
+                <StackPanel Orientation="Horizontal" Spacing="8"><FontIcon Glyph="&#xE7FC;" FontSize="18"/><TextBlock x:Name="GamesCategoryText" /></StackPanel>
+            </ToggleButton>
+            <ToggleButton x:Name="MusicCategoryButton" Grid.Column="2" Tag="音乐" Style="{StaticResource CategoryButtonStyle}" Click="CategoryButton_Click">
+                <StackPanel Orientation="Horizontal" Spacing="8"><FontIcon Glyph="&#xE8D6;" FontSize="18"/><TextBlock x:Name="MusicCategoryText" /></StackPanel>
+            </ToggleButton>
+        </Grid>
+        <Border x:Name="SearchBoxBorder" Grid.Row="2" CornerRadius="15" BorderThickness="0.6"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" Padding="8,0">
+            <Grid Height="30">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <FontIcon Grid.Column="0" Glyph="&#xE721;" FontSize="14" VerticalAlignment="Center"
+                          Margin="0,0,8,0" />
+                <TextBox x:Name="SearchBox" Grid.Column="1"
+                         PlaceholderText="{x:Bind helpers:LanguageService.Translate('搜索...'), Mode=OneWay}"
+                         Style="{StaticResource NoClearButtonTextBoxStyle}" BorderThickness="0" Background="Transparent"
+                         PlaceholderForeground="{ThemeResource TextFillColorSecondaryBrush}"
+                         Padding="0" MinWidth="0" VerticalAlignment="Center" TextChanged="SearchBox_TextChanged">
+                    <TextBox.Resources>
+                        <Thickness x:Key="TextControlBorderThemeThicknessFocused">0</Thickness>
+                        <Thickness x:Key="TextControlBorderThemeThickness">0</Thickness>
+                        <SolidColorBrush x:Key="TextControlBackground" Color="Transparent" />
+                        <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="Transparent" />
+                        <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="Transparent" />
+                        <SolidColorBrush x:Key="TextControlBorderBrush" Color="Transparent" />
+                        <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="Transparent" />
+                        <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="Transparent" />
+                    </TextBox.Resources>
+                </TextBox>
+                <Button x:Name="ClearSearchButton" Grid.Column="2" Width="22" Height="22" Padding="0"
+                        Margin="4,0,0,0" Background="Transparent" BorderThickness="0" CornerRadius="11"
+                        VerticalAlignment="Center" Click="ClearSearchButton_Click"
+                        ToolTipService.ToolTip="{x:Bind helpers:LanguageService.Translate('清空'), Mode=OneWay}"
+                        helpers:PressAnimationHelper.EnableBounce="True">
+                    <FontIcon Glyph="&#xE711;" FontSize="11" />
+                </Button>
+            </Grid>
+        </Border>
+        <TextBlock x:Name="DescriptionText" Grid.Row="3" TextWrapping="Wrap" Opacity="0.75" />
+        <ListView x:Name="EntriesList" Grid.Row="4" 
+                  CornerRadius="8"
+                  Padding="2,12,2,12"
+                  SelectionMode="Multiple" SelectionChanged="EntriesList_SelectionChanged" />
+        <TextBlock x:Name="StatusText" Grid.Row="5" TextWrapping="Wrap" />
+        <Grid Grid.Row="6" ColumnSpacing="8">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button x:Name="RemoveButton"
+                        Width="100"
+                        CornerRadius="14" Click="RemoveButton_Click" helpers:PressAnimationHelper.EnableBounce="True" />
+                <Button x:Name="ExcludeButton"
+                        Width="180"
+                        CornerRadius="14" Click="ExcludeButton_Click" helpers:PressAnimationHelper.EnableBounce="True" />
+                <Button x:Name="UnblockButton"
+                        Width="120"
+                        CornerRadius="14"
+                        Click="UnblockButton_Click" helpers:PressAnimationHelper.EnableBounce="True" />
+            </StackPanel>
+            <Button x:Name="CloseButton" Grid.Column="1"
+                    Width="80"
+                    CornerRadius="14"
+                    Click="CloseButton_Click" helpers:PressAnimationHelper.EnableBounce="True" />
+        </Grid>
+    </Grid>
+</Window>

@@ -1,0 +1,13 @@
+{
+  "profiles": {
+    "BlockBox (Package)": {
+      "commandName": "MsixPackage",
+      "hotReloadEnabled": true,
+      "nativeDebugging": false
+    },
+    "BlockBox (Unpackaged)": {
+      "commandName": "Project",
+      "hotReloadEnabled": true
+    }
+  }
+}

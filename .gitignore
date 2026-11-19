@@ -1,0 +1,17 @@
+# 编译输出
+bin/
+obj/
+publish/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userprefs
+
+# 测试结果
+TestResults/
+
+# 系统
+Thumbs.db
+.DS_Store

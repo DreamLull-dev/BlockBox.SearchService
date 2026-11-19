@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../BlockBox/Services/ProgramCategoryHistory.cs" Link="ProgramCategoryHistory.cs" />
+    <Compile Include="../../BlockBox/Services/ProgramCategoryClassifier.cs" Link="ProgramCategoryClassifier.cs" />
+    <Compile Include="../../BlockBox/Helpers/AppDataPaths.cs" Link="AppDataPaths.cs" />
+  </ItemGroup>
+</Project>
