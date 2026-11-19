@@ -104,7 +104,14 @@ internal sealed class SearchPipeServer(string? clientSid)
                 if (kind is not ("all" or "application" or "image" or "audio" or "video" or "archive"))
                     return new(request.Id, "error", "Unsupported file type filter.");
                 int limit = Math.Clamp(request.Limit, 1, PipeProtocol.MaxPageSize);
-                var rows = store.SearchNames(query, kind, limit, request.AfterName, request.AfterVolumeId, request.AfterFileId, request.Descending);
+                SearchSort sort = request.Sort switch
+                {
+                    "size" => SearchSort.Size,
+                    "time" => SearchSort.Time,
+                    _ => SearchSort.Name
+                };
+                var rows = store.SearchNames(query, kind, limit, request.AfterName, request.AfterVolumeId,
+                    request.AfterFileId, request.AfterSize, request.AfterModified, request.Descending, sort);
                 bool hasMore = rows.Count > limit;
                 var page = rows.Take(limit).ToList();
                 if (page.Count == 0 && !hasMore)
@@ -117,7 +124,8 @@ internal sealed class SearchPipeServer(string? clientSid)
                 }
                 var last = page.LastOrDefault();
                 return new(request.Id, "ok", Results: page, HasMore: hasMore,
-                    NextName: last?.Name, NextVolumeId: last?.VolumeId, NextFileId: last?.FileId);
+                    NextName: last?.Name, NextVolumeId: last?.VolumeId, NextFileId: last?.FileId,
+                    NextSize: last?.Size, NextModified: last?.ModifiedTicks);
             default:
                 return new(request.Id, "error", "Unsupported operation");
         }

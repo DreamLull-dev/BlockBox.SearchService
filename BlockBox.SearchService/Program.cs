@@ -98,6 +98,8 @@ internal static class Program
         }
 
         pipe.SetStore(store);
+        // 建索引只枚举 MFT，不带大小/时间；这里在后台逐步补齐，排序和显示才有数据可用。
+        store.StartMetadataEnrichment(cancellationToken);
         var indexer = new IndexingCoordinator(store);
         Task indexing = Task.CompletedTask;
         if (clientSid is null)

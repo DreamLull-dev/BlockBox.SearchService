@@ -45,6 +45,8 @@ namespace BlockBox.Views
         private string? _cursorName;
         private string? _cursorVolumeId;
         private long? _cursorFileId;
+        private long? _cursorSize;
+        private long? _cursorModified;
         private string _activeQuery = "";
         private string _activeKind = "all";
         private int _selectedKindIndex;
@@ -53,11 +55,6 @@ namespace BlockBox.Views
         private long _sortRequestVersion;
         private int _iconLoadLimit = 200;
         private readonly SemaphoreSlim _thumbnailSemaphore = new(4, 4);
-        private readonly SemaphoreSlim _metadataSemaphore = new(4, 4);
-        // 按时间/大小排序前先把后续页补齐，否则没加载出来的文件不参与排序。
-        private const int BulkPageSize = 5000;
-        private const int MaxRowsForFullSort = 20000;
-        private bool _bulkLoading;
         public ObservableCollection<SearchResultItem> Results { get; } = new();
 
         // 缩略图悬停预览：停留 200ms 才弹出，最大 200×200 等比缩放。
@@ -417,150 +414,15 @@ namespace BlockBox.Views
 
         private async Task ApplyCurrentSortAsync()
         {
-            if (_sortMode == ResultSortMode.Name)
-            {
-                // 名称顺序来自服务端的顺序分页：换方向要重新取页，而不是只把已加载的行反过来。
-                await RunSearchAsync(resetSort: false);
-                return;
-            }
-
-            long request = ++_sortRequestVersion;
-            long version = _searchVersion;
-
-            // 时间/大小是客户端排序：先把后续页补齐，否则没加载出来的文件不会参与排序。
-            if (_searchHasMore && Results.Count < MaxRowsForFullSort)
-                await LoadAllPagesForSortAsync(version);
-            if (request != _sortRequestVersion || version != _searchVersion) return;
-
-            // 结果太多时只对上限内的部分排序，并停止继续追加名序页，避免打乱已排好的顺序。
-            bool capped = _searchHasMore;
-            if (capped) _searchHasMore = false;
-
-            var items = Results.ToList();
-            StatusText.Text = LanguageService.Translate("正在读取文件信息…");
-            await Task.Run(() => Parallel.ForEach(items,
-                new ParallelOptions { MaxDegreeOfParallelism = 4 }, item => item.LoadSortMetadata()));
-            if (request != _sortRequestVersion) return;
-            SortLoadedResults();
-            UpdateResultsStatus();
-            if (capped)
-                StatusText.Text = LanguageService.TranslateFormat("结果超过 {count} 项，仅对已加载部分排序", ("{count}", MaxRowsForFullSort));
+            // 排序在服务端完成（名称/大小/时间都能全量分页），换排序只要从第一页重新取，
+            // 不再需要“先把结果全加载到客户端再排”。
+            await RunSearchAsync(resetSort: false);
         }
 
-        /// <summary>
-        /// 按当前查询把剩余分页全部取回来（大页 + 总量上限）。只用于客户端排序，
-        /// 期间不做逐页元数据读取，排序前统一读一次。
-        /// </summary>
-        private async Task LoadAllPagesForSortAsync(long version)
-        {
-            _bulkLoading = true;
-            try
-            {
-                int stalled = 0;
-                while (_searchHasMore && Results.Count < MaxRowsForFullSort && version == _searchVersion)
-                {
-                    StatusText.Text = LanguageService.TranslateFormat("正在加载全部结果（{count} 项）", ("{count}", Results.Count));
-                    string? beforeName = _cursorName;
-                    long? beforeFile = _cursorFileId;
-                    await LoadNextPageAsync(version, BulkPageSize);
-                    if (version != _searchVersion) return;
-
-                    // 用游标是否前进判断有没有进展：整页都被分类过滤掉时行数不变，但游标会前进。
-                    bool advanced = !string.Equals(_cursorName, beforeName, StringComparison.Ordinal)
-                        || _cursorFileId != beforeFile;
-                    if (!advanced)
-                    {
-                        // 上一页可能还在加载中（_isLoadingMore），稍等重试，避免排序被截断在半路。
-                        if (_searchHasMore && _isLoadingMore && ++stalled < 20)
-                        {
-                            await Task.Delay(120);
-                            if (version != _searchVersion) return;
-                            continue;
-                        }
-                        break;
-                    }
-                    stalled = 0;
-                }
-            }
-            catch (Exception ex) when (ex is IOException or TimeoutException or System.UnauthorizedAccessException or InvalidDataException)
-            {
-                if (version == _searchVersion) StatusText.Text = LanguageService.Translate("搜索服务连接失败，请检查服务状态。");
-            }
-            finally
-            {
-                _bulkLoading = false;
-            }
-        }
-
-        private void SortLoadedResults()
-        {
-            var snapshot = Results.ToList();
-            snapshot.Sort(CompareResults);
-            // 先摘掉 ItemsSource 再重建：两万条逐条 Add 不会每条都触发列表刷新，
-            // 重新挂回去只做一次整体重建（排序本来就会回到顶部）。
-            ResultsList.ItemsSource = null;
-            try
-            {
-                Results.Clear();
-                foreach (var item in snapshot) Results.Add(item);
-            }
-            finally
-            {
-                ResultsList.ItemsSource = Results;
-            }
-        }
-
-        /// <summary>
-        /// 负数表示 <paramref name="left"/> 排在 <paramref name="right"/> 前面。规则与原来
-        /// OrderBy/ThenBy 的写法一致：精确匹配优先；名称模式按名称升/降序，其它模式按
-        /// 时间/大小排、名称始终升序兜底。
-        /// </summary>
-        private int CompareResults(SearchResultItem left, SearchResultItem right)
-        {
-            if (_sortMode == ResultSortMode.Name)
-            {
-                int rank = IsExactNameMatch(right.Name, _activeQuery).CompareTo(IsExactNameMatch(left.Name, _activeQuery));
-                if (rank != 0) return rank;
-                return _sortReversed
-                    ? StringComparer.OrdinalIgnoreCase.Compare(right.Name, left.Name)
-                    : StringComparer.OrdinalIgnoreCase.Compare(left.Name, right.Name);
-            }
-
-            int primary = _sortMode == ResultSortMode.ModifiedTime
-                ? left.LastWriteTimeUtc.CompareTo(right.LastWriteTimeUtc)
-                : left.SizeBytes.CompareTo(right.SizeBytes);
-            if (!_sortReversed) primary = -primary;
-            if (primary != 0) return primary;
-            return StringComparer.OrdinalIgnoreCase.Compare(left.Name, right.Name);
-        }
-
-        /// <summary>
-        /// 把新一页并进列表。名称升序时服务端返回的顺序就是列表顺序，直接追加；
-        /// 其它排序用二分插入。绝不能用 Clear + 重新 Add —— 那会让 ListView 重置，
-        /// 滚动位置跳回顶部（之前每加载一页就闪一下、回到顶部的原因）。
-        /// </summary>
         private void AppendPage(List<SearchResultItem> pageItems)
         {
-            // 名称模式下服务端就按显示顺序（含倒序）分页，直接追加；批量补齐排序时也先按名序
-            // 追加，最后统一排序；其它排序是本地排序，用二分插入。
-            if (_bulkLoading || _sortMode == ResultSortMode.Name)
-            {
-                foreach (var item in pageItems) Results.Add(item);
-                return;
-            }
-            foreach (var item in pageItems) InsertSorted(item);
-        }
-
-        private void InsertSorted(SearchResultItem item)
-        {
-            int low = 0, high = Results.Count;
-            while (low < high)
-            {
-                int middle = low + ((high - low) >> 1);
-                if (CompareResults(Results[middle], item) <= 0) low = middle + 1;
-                else high = middle;
-            }
-            Results.Insert(low, item);
+            // 服务端返回的顺序就是列表顺序（任何排序模式都一样），直接追加。
+            foreach (var item in pageItems) Results.Add(item);
         }
 
         private void UpdateResultsStatus()
@@ -1100,8 +962,6 @@ namespace BlockBox.Views
                 _iconLoadLimit = ((index / 200) + 1) * 200;
             if (index < _iconLoadLimit)
                 _ = item.LoadIconAsync(_thumbnailSemaphore);
-            // 行右侧的大小/修改时间按需读取：只对真正显示出来的行做文件元数据查询。
-            _ = item.LoadDisplayMetadataAsync(_metadataSemaphore);
         }
 
         private void Thumbnail_PointerEntered(object sender, PointerRoutedEventArgs e)
@@ -1226,7 +1086,7 @@ namespace BlockBox.Views
             string query = QueryBox.Text.Trim();
             _activeQuery = query;
             _activeKind = _selectedKindIndex switch { 1 => "application", 2 => "image", 3 => "audio", 4 => "video", 5 => "archive", _ => "all" };
-            _cursorName = _cursorVolumeId = null; _cursorFileId = null;
+            _cursorName = _cursorVolumeId = null; _cursorFileId = null; _cursorSize = null; _cursorModified = null;
             _searchHasMore = false; _isLoadingMore = false;
             _iconLoadLimit = 200;
             _autoLoadOffset = double.NaN;
@@ -1251,40 +1111,41 @@ namespace BlockBox.Views
             }
         }
 
-        private async Task LoadNextPageAsync(long version, int pageSize = 500)
+        private async Task LoadNextPageAsync(long version)
         {
             if (version != _searchVersion || _isLoadingMore || !_searchHasMore && Results.Count > 0) return;
             _isLoadingMore = true;
             try
             {
-                var response = await _searchClient.SendAsync("search", _activeQuery, _activeKind, pageSize,
+                var response = await _searchClient.SendAsync("search", _activeQuery, _activeKind, 500,
                     afterName: _cursorName, afterVolumeId: _cursorVolumeId, afterFileId: _cursorFileId,
+                    afterSize: _cursorSize, afterModified: _cursorModified,
                     shouldContinue: () => version == _searchVersion,
-                    descending: _sortMode == ResultSortMode.Name && _sortReversed);
+                    descending: _sortReversed,
+                    sort: _sortMode switch
+                    {
+                        ResultSortMode.ModifiedTime => "time",
+                        ResultSortMode.Size => "size",
+                        _ => "name"
+                    });
                 if (version != _searchVersion) return;
                 if (response.Status != "ok") { StatusText.Text = response.Message ?? response.Status; return; }
                 var hits = response.Results ?? new();
                 var pageItems = hits.Where(hit => KindMatches(hit.Path, _selectedKindIndex))
                     .Select(hit => new SearchResultItem(hit)).ToList();
-                // 批量补齐用于排序时不逐页读元数据，排序前统一读一次。
-                if (!_bulkLoading && _sortMode != ResultSortMode.Name)
-                {
-                    StatusText.Text = LanguageService.Translate("正在读取文件信息…");
-                    await Task.Run(() => Parallel.ForEach(pageItems,
-                        new ParallelOptions { MaxDegreeOfParallelism = 4 }, item => item.LoadSortMetadata()));
-                    if (version != _searchVersion) return;
-                }
                 AppendPage(pageItems);
                 _searchHasMore = response.HasMore;
                 _cursorName = response.NextName;
                 _cursorVolumeId = response.NextVolumeId;
                 _cursorFileId = response.NextFileId;
+                _cursorSize = response.NextSize;
+                _cursorModified = response.NextModified;
                 UpdateResultsStatus();
                 if (Results.Count == 0 && !_searchHasMore && !string.IsNullOrEmpty(response.Message))
                     StatusText.Text = LocalizeServiceMessage(response.Message);
-                if (!_bulkLoading && _searchHasMore && hits.Count == 0)
+                if (_searchHasMore && hits.Count == 0)
                     DispatcherQueue.TryEnqueue(() => _ = LoadNextPageAsync(version));
-                else if (!_bulkLoading && _searchHasMore && pageItems.Count > 0 && FindScrollViewer(ResultsList) is { } scrollViewer
+                else if (_searchHasMore && pageItems.Count > 0 && FindScrollViewer(ResultsList) is { } scrollViewer
                     && scrollViewer.ScrollableHeight <= 0)
                     // 只有列表根本还不能滚动时才继续补页（例如整页都被分类过滤掉）；能滚动时
                     // 交给滚动事件，避免插入到上方后“贴底”状态反复触发加载。
@@ -1405,8 +1266,6 @@ namespace BlockBox.Views
     {
         private ImageSource? _iconSource;
         private int _iconLoadStarted;
-        private int _sortMetadataLoaded;
-        private int _displayMetadataStarted;
         private bool? _isChecked;
         private bool _isRowHighlighted;
         public string Path { get; private set; }
@@ -1456,6 +1315,11 @@ namespace BlockBox.Views
             Path = hit.Path;
             IsDirectory = hit.IsDirectory;
             PlaceholderGlyph = hit.IsDirectory ? "\uE8B7" : "\uE8A5";
+            // 大小/修改时间来自服务端索引（后台元数据补齐的结果），不再逐文件 stat。
+            SizeBytes = hit.Size;
+            LastWriteTimeUtc = hit.ModifiedTicks > 0
+                ? new DateTime(hit.ModifiedTicks, DateTimeKind.Utc)
+                : default;
         }
 
         /// <summary>重命名成功后刷新这一行的路径与显示名（模板用的是 OneWay 绑定）。</summary>
@@ -1466,34 +1330,15 @@ namespace BlockBox.Views
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Name)));
         }
 
-        /// <summary>行右侧显示的大小（目录或元数据还没读到时为空）。</summary>
-        public string SizeText => IsDirectory || LastWriteTimeUtc == default ? string.Empty : FormatSize(SizeBytes);
+        /// <summary>行右侧显示的大小（目录或元数据还没补齐时为空）。</summary>
+        public string SizeText => IsDirectory || SizeBytes < 0 || LastWriteTimeUtc == default
+            ? string.Empty
+            : FormatSize(SizeBytes);
 
         /// <summary>行右侧显示的修改时间。</summary>
         public string ModifiedText => LastWriteTimeUtc == default
             ? string.Empty
             : LastWriteTimeUtc.ToLocalTime().ToString("g", System.Globalization.CultureInfo.CurrentCulture);
-
-        /// <summary>
-        /// 读一次文件元数据并通知界面刷新大小/时间。只对真正显示出来的行调用（列表虚拟化），
-        /// 同一行只做一次；读不到（文件已删除/无权限）就保持空白。
-        /// </summary>
-        internal async Task LoadDisplayMetadataAsync(SemaphoreSlim throttle)
-        {
-            if (Interlocked.Exchange(ref _displayMetadataStarted, 1) != 0) return;
-            try
-            {
-                await throttle.WaitAsync();
-                try { await Task.Run(LoadSortMetadata); }
-                finally { throttle.Release(); }
-            }
-            catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
-            {
-                return;
-            }
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(SizeText)));
-            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ModifiedText)));
-        }
 
         private static string FormatSize(long bytes)
         {
@@ -1506,31 +1351,6 @@ namespace BlockBox.Views
                 unit++;
             }
             return unit == 0 ? $"{bytes} {units[0]}" : $"{value:0.#} {units[unit]}";
-        }
-
-        internal void LoadSortMetadata()        {
-            if (Interlocked.Exchange(ref _sortMetadataLoaded, 1) != 0) return;
-            try
-            {
-                if (IsDirectory)
-                {
-                    var directory = new DirectoryInfo(Path);
-                    if (!directory.Exists) return;
-                    LastWriteTimeUtc = directory.LastWriteTimeUtc;
-                    SizeBytes = 0;
-                }
-                else
-                {
-                    var file = new FileInfo(Path);
-                    if (!file.Exists) return;
-                    LastWriteTimeUtc = file.LastWriteTimeUtc;
-                    SizeBytes = file.Length;
-                }
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or System.Security.SecurityException)
-            {
-                // Inaccessible or stale results sort after entries with readable metadata.
-            }
         }
 
         internal async Task LoadIconAsync(SemaphoreSlim throttle)

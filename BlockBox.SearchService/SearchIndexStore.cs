@@ -30,6 +30,8 @@ internal sealed class SearchIndexStore
                     ParentId INTEGER NOT NULL,
                     Name TEXT NOT NULL,
                     IsDirectory INTEGER NOT NULL,
+                    Size INTEGER NOT NULL DEFAULT -1,
+                    ModifiedTicks INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY(VolumeId, FileId, Name));
                 CREATE TABLE IF NOT EXISTS Volumes(
                     VolumeId TEXT PRIMARY KEY,
@@ -42,6 +44,9 @@ internal sealed class SearchIndexStore
                 """;
             command.ExecuteNonQuery();
             EnsureColumn(connection, "Volumes", "ScanCursor", "INTEGER NOT NULL DEFAULT 0");
+            // 旧索引没有大小/时间列：补上后这些行会被后台补齐任务重新 stat 一次。
+            EnsureColumn(connection, "Entries", "Size", "INTEGER NOT NULL DEFAULT -1");
+            EnsureColumn(connection, "Entries", "ModifiedTicks", "INTEGER NOT NULL DEFAULT 0");
             DropLegacyFullTextIndex(connection);
         }
         LoadCatalog();
@@ -101,17 +106,18 @@ internal sealed class SearchIndexStore
         return (reader.GetInt32(0), reader.GetInt64(1));
     }
 
-    private static IEnumerable<(long FileId, long ParentId, string Name, bool IsDirectory)> ReadEntries(
+    private static IEnumerable<(long FileId, long ParentId, string Name, bool IsDirectory, long Size, long ModifiedTicks)> ReadEntries(
         SqliteConnection connection, string volumeId)
     {
         using var command = connection.CreateCommand();
         // No ORDER BY: the primary key already covers the lookup, and forcing rowid order would
         // make SQLite sort a million rows into a temporary b-tree before the first one loads.
-        command.CommandText = "SELECT FileId,ParentId,Name,IsDirectory FROM Entries WHERE VolumeId=$id";
+        command.CommandText = "SELECT FileId,ParentId,Name,IsDirectory,Size,ModifiedTicks FROM Entries WHERE VolumeId=$id";
         command.Parameters.AddWithValue("$id", volumeId);
         using var reader = command.ExecuteReader();
         while (reader.Read())
-            yield return (reader.GetInt64(0), reader.GetInt64(1), reader.GetString(2), reader.GetInt64(3) != 0);
+            yield return (reader.GetInt64(0), reader.GetInt64(1), reader.GetString(2), reader.GetInt64(3) != 0,
+                reader.GetInt64(4), reader.GetInt64(5));
     }
 
     /// <summary>Starts a full rebuild: drops the volume's rows and stores the USN baseline the scan is based on.</summary>
@@ -296,8 +302,64 @@ internal sealed class SearchIndexStore
     /// <summary>Answered entirely from the in-memory catalog; the database is never touched here.</summary>
     internal IReadOnlyList<SearchHit> SearchNames(string query, string kind, int limit,
         string? afterName = null, string? afterVolumeId = null, long? afterFileId = null,
-        bool descending = false) =>
-        _catalog.Search(query, kind, limit, afterName, afterVolumeId, afterFileId, descending);
+        long? afterSize = null, long? afterModified = null,
+        bool descending = false, SearchSort sort = SearchSort.Name) =>
+        _catalog.Search(query, kind, limit, afterName, afterVolumeId, afterFileId,
+            afterSize, afterModified, descending, sort);
+
+    /// <summary>启动后台元数据补齐：把大小/修改时间逐步写进内存索引和数据库。</summary>
+    internal void StartMetadataEnrichment(CancellationToken cancellationToken)
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await _catalog.EnrichMetadataAsync(WriteMetadataBatchAsync, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                ServiceLog.Write("metadata enrichment failed: " + ex);
+            }
+        }, cancellationToken);
+    }
+
+    private Task WriteMetadataBatchAsync(string volumeId, IReadOnlyList<SearchCatalog.MetadataUpdate> updates)
+    {
+        try
+        {
+            using var connection = Open();
+            using var transaction = connection.BeginTransaction();
+            using var command = connection.CreateCommand();
+            command.Transaction = transaction;
+            command.CommandText = """
+                UPDATE Entries SET Size=$size, ModifiedTicks=$ticks
+                WHERE VolumeId=$volume AND FileId=$file AND Name=$name AND ModifiedTicks=0
+                """;
+            var pVolume = command.Parameters.Add("$volume", SqliteType.Text);
+            var pFile = command.Parameters.Add("$file", SqliteType.Integer);
+            var pName = command.Parameters.Add("$name", SqliteType.Text);
+            var pSize = command.Parameters.Add("$size", SqliteType.Integer);
+            var pTicks = command.Parameters.Add("$ticks", SqliteType.Integer);
+            foreach (var update in updates)
+            {
+                pVolume.Value = update.VolumeId;
+                pFile.Value = update.FileId;
+                pName.Value = update.Name;
+                pSize.Value = update.Size;
+                pTicks.Value = update.ModifiedTicks;
+                command.ExecuteNonQuery();
+            }
+            transaction.Commit();
+        }
+        catch (Exception ex) when (ex is SqliteException or IOException or InvalidOperationException)
+        {
+            ServiceLog.Write("metadata persist failed: " + ex.Message);
+        }
+        return Task.CompletedTask;
+    }
 
     private static void EnsureColumn(SqliteConnection connection, string table, string column, string definition)
     {

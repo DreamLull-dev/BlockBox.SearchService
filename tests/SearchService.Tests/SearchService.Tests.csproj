@@ -13,6 +13,7 @@
     <Compile Include="../../BlockBox.SearchService/InMemorySearchIndex.cs" Link="InMemorySearchIndex.cs" />
     <Compile Include="../../BlockBox.SearchService/LongIntMap.cs" Link="LongIntMap.cs" />
     <Compile Include="../../BlockBox.SearchService/SearchIndexStore.cs" Link="SearchIndexStore.cs" />
+    <Compile Include="../../BlockBox.SearchService/ServiceLog.cs" Link="ServiceLog.cs" />
     <Compile Include="../../BlockBox.SearchService/Protocol.cs" Link="Protocol.cs" />
     <Compile Include="../../BlockBox.SearchService/NtfsMftEnumerator.cs" Link="NtfsMftEnumerator.cs" />
     <Compile Include="../../BlockBox.SearchService/UsnJournalReader.cs" Link="UsnJournalReader.cs" />

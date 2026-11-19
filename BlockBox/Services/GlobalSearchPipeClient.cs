@@ -20,7 +20,8 @@ internal sealed class GlobalSearchPipeClient
     internal async Task<PipeSearchResponse> SendAsync(string operation, string? query = null, string? kind = null,
         int limit = 200,
         string? afterName = null, string? afterVolumeId = null, long? afterFileId = null,
-        Func<bool>? shouldContinue = null, bool descending = false)
+        long? afterSize = null, long? afterModified = null,
+        Func<bool>? shouldContinue = null, bool descending = false, string? sort = null)
     {
         await _requestGate.WaitAsync();
         try
@@ -32,7 +33,8 @@ internal sealed class GlobalSearchPipeClient
             await pipe.ConnectAsync(PipeConnectionTimeoutMs);
             using var reader = new StreamReader(pipe, new UTF8Encoding(false), false, 4096, leaveOpen: true);
             await using var writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, leaveOpen: true) { AutoFlush = true };
-            var request = new PipeSearchRequest(Guid.NewGuid().ToString("N"), operation, query, kind, limit, afterName, afterVolumeId, afterFileId, descending);
+            var request = new PipeSearchRequest(Guid.NewGuid().ToString("N"), operation, query, kind, limit,
+                afterName, afterVolumeId, afterFileId, afterSize, afterModified, descending, sort);
             await writer.WriteLineAsync(JsonSerializer.Serialize(request, JsonOptions).AsMemory());
             // Never wait forever: a crashed or wedged service would otherwise hold the request gate
             // and make every later search hang silently.
@@ -54,7 +56,8 @@ internal sealed class GlobalSearchPipeClient
     }
 
     private sealed record PipeSearchRequest(string Id, string Operation, string? Query, string? Kind, int Limit,
-        string? AfterName, string? AfterVolumeId, long? AfterFileId, bool Descending);
+        string? AfterName, string? AfterVolumeId, long? AfterFileId, long? AfterSize, long? AfterModified,
+        bool Descending, string? Sort);
 }
 
 internal sealed class PipeSearchResponse
@@ -67,6 +70,8 @@ internal sealed class PipeSearchResponse
     public string? NextName { get; init; }
     public string? NextVolumeId { get; init; }
     public long? NextFileId { get; init; }
+    public long? NextSize { get; init; }
+    public long? NextModified { get; init; }
 }
 
 internal sealed class PipeSearchHit
@@ -77,4 +82,6 @@ internal sealed class PipeSearchHit
     public string Name { get; init; } = "";
     public string Path { get; init; } = "";
     public bool IsDirectory { get; init; }
+    public long Size { get; init; } = -1;
+    public long ModifiedTicks { get; init; }
 }

@@ -222,6 +222,26 @@ for (int round = 0; round < 2; round++)
     }
 }
 
+// ---------------------------------------------------------------- sort keys
+{
+    var sorted = new VolumeIndex("V:", @"C:\", "Ready", 8, 64);
+    int small = sorted.Upsert(11, 5, "small.bin", false);
+    int large = sorted.Upsert(12, 5, "big.bin", false);
+    int unknown = sorted.Upsert(13, 5, "unknown.bin", false);
+    sorted.SetMetadata(small, 1_000, 1000);
+    sorted.SetMetadata(large, 900_000, 2000);
+    Check(VolumeIndex.CompareEntries(sorted, large, 0, sorted, small, 0, SearchSort.Size, false) < 0,
+        "size sort puts the bigger file first");
+    Check(VolumeIndex.CompareEntries(sorted, small, 0, sorted, large, 0, SearchSort.Size, true) < 0,
+        "reversed size sort puts the smaller file first");
+    Check(VolumeIndex.CompareEntries(sorted, unknown, 0, sorted, large, 0, SearchSort.Size, false) > 0,
+        "unknown size sorts last");
+    Check(VolumeIndex.CompareEntries(sorted, large, 0, sorted, small, 0, SearchSort.Time, false) < 0,
+        "time sort puts the newer file first");
+    Check(VolumeIndex.CompareEntries(sorted, small, 0, sorted, large, 0, SearchSort.Time, true) < 0,
+        "reversed time sort puts the older file first");
+}
+
 // ---------------------------------------------------------------- long→int map
 var map = new LongIntMap(4);
 for (int i = 0; i < 100_000; i++) map.Set(i * 7L - 50_000, i);
