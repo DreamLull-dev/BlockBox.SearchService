@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Microsoft Store 打包用的清单模板（Windows Application Packaging Project / 单项目 MSIX）。
+  占位符由 Visual Studio 的 “Associate with Store” 或打包脚本替换：
+
+    __IDENTITY_NAME__           Partner Center → 产品标识 → 包/Identity Name
+    __PUBLISHER__               Partner Center → 产品标识 → 发布者/Publisher（CN=...）
+    __PUBLISHER_DISPLAY_NAME__  Partner Center 里登记的发布者显示名
+    __VERSION__                 四段版本号，例如 1.0.0.0（必须递增）
+
+  注意：
+  - 商店版不包含全局搜索服务；应用里只保留“前往下载”，不提供应用内安装（见 ShowServicePanel 的打包判断）。
+  - 开机启动使用 uap5:StartupTask；TaskId 必须与 StartupManager.PackagedStartupTaskId 一致。
+  - Assets 目录里的图标需要替换成你自己的品牌图。
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap5 rescap">
+
+  <Identity
+    Name="__IDENTITY_NAME__"
+    Publisher="__PUBLISHER__"
+    Version="__VERSION__"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>Block Box</DisplayName>
+    <PublisherDisplayName>__PUBLISHER_DISPLAY_NAME__</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="zh-CN" />
+    <Resource Language="en-US" />
+  </Resources>
+
+  <Capabilities>
+    <!-- WinUI 3 桌面应用需要完整信任（full trust） -->
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+
+  <Applications>
+    <Application
+      Id="App"
+      Executable="BlockBox.exe"
+      EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="Block Box"
+        Description="程序文件管理器"
+        BackgroundColor="#1F1F1F"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png" />
+      <Extensions>
+        <!-- 打包应用不能写“启动”文件夹，用 StartupTask 实现开机启动 -->
+        <uap5:Extension
+          Category="windows.startupTask"
+          Executable="BlockBox.exe"
+          EntryPoint="Windows.FullTrustApplication">
+          <uap5:StartupTask
+            TaskId="BlockBoxStartup"
+            Enabled="false"
+            DisplayName="Block Box" />
+        </uap5:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+</Package>

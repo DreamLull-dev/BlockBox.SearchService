@@ -1108,11 +1108,15 @@ namespace BlockBox.Views
             ServiceMissingText.Text = LanguageService.Translate(installed
                 ? "搜索服务已安装但没有运行。启动它需要管理员权限，启动后即可搜索整盘文件。"
                 : "全局搜索需要「Block Box 搜索服务」。它在后台为整盘建立文件索引（只读文件名、大小和时间），安装时需要管理员权限。");
-            ServiceMissingHint.Text = LanguageService.Translate("支持 .msix 安装包或 .zip 压缩包；安装完成后会自动重新连接。");
+            ServiceMissingHint.Text = LanguageService.Translate(AppUpdateService.IsPackaged
+                ? "下载后请手动以管理员身份运行安装包，然后点“重新检测”。"
+                : "支持 .msix 安装包或 .zip 压缩包；安装完成后会自动重新连接。");
             ServiceMissingHint.Visibility = installed ? Visibility.Collapsed : Visibility.Visible;
             DownloadServiceButton.Visibility = installed ? Visibility.Collapsed : Visibility.Visible;
             DownloadServiceButton.Content = LanguageService.Translate("前往下载");
-            InstallServiceButton.Content = LanguageService.Translate(installed ? "启动服务" : "我已下载…");
+            InstallServiceButton.Content = LanguageService.Translate(installed
+                ? "启动服务"
+                : AppUpdateService.IsPackaged ? "重新检测" : "我已下载…");
             StatusText.Text = LanguageService.Translate("搜索服务不可用。");
         }
 
@@ -1133,6 +1137,12 @@ namespace BlockBox.Views
         {
             if (_serviceState == SearchServiceState.NotInstalled)
             {
+                // 打包（商店）版不在应用内安装包外组件：只提供下载链接，用户手动安装后点“重新检测”。
+                if (AppUpdateService.IsPackaged)
+                {
+                    await RefreshServiceAvailabilityThenSearchAsync();
+                    return;
+                }
                 await PickAndInstallServiceAsync();
                 return;
             }
