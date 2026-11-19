@@ -956,7 +956,14 @@ namespace BlockBox.Views
 
         private void ResultsList_ContainerContentChanging(ListViewBase sender, ContainerContentChangingEventArgs e)
         {
-            if (e.InRecycleQueue || e.Item is not SearchResultItem item) return;
+            if (e.InRecycleQueue)
+            {
+                // 容器被回收说明这一行已经滚出视口：释放解码后的缩略图，
+                // 长时间滚动时内存只跟可见行数相关（行对象本身很轻，不必重建）。
+                if (e.Item is SearchResultItem recycled) recycled.ReleaseIcon();
+                return;
+            }
+            if (e.Item is not SearchResultItem item) return;
             int index = e.ItemIndex;
             if (index >= _iconLoadLimit)
                 _iconLoadLimit = ((index / 200) + 1) * 200;
@@ -1317,7 +1324,7 @@ namespace BlockBox.Views
             PlaceholderGlyph = hit.IsDirectory ? "\uE8B7" : "\uE8A5";
             // 大小/修改时间来自服务端索引（后台元数据补齐的结果），不再逐文件 stat。
             SizeBytes = hit.Size;
-            LastWriteTimeUtc = hit.ModifiedTicks > 0
+            LastWriteTimeUtc = hit.ModifiedTicks > 0 && hit.ModifiedTicks <= DateTime.MaxValue.Ticks
                 ? new DateTime(hit.ModifiedTicks, DateTimeKind.Utc)
                 : default;
         }
@@ -1353,6 +1360,23 @@ namespace BlockBox.Views
             return unit == 0 ? $"{bytes} {units[0]}" : $"{value:0.#} {units[unit]}";
         }
 
+        /// <summary>行滚出视口后释放解码后的图标/缩略图；重新出现在视口时会按需再加载。</summary>
+        internal void ReleaseIcon()
+        {
+            // 先把“已开始加载”标记清掉：还在路上的加载完成时不会再写回这个已经离屏的项。
+            Interlocked.Exchange(ref _iconLoadStarted, 0);
+            if (_iconSource is null) return;
+            _iconSource = null;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IconSource)));
+        }
+
+        /// <summary>加载期间可能被回收，只有仍然“在屏”时才写回图标。</summary>
+        private void SetIcon(ImageSource? source)
+        {
+            if (Volatile.Read(ref _iconLoadStarted) == 0) return;
+            IconSource = source;
+        }
+
         internal async Task LoadIconAsync(SemaphoreSlim throttle)
         {
             if (Interlocked.Exchange(ref _iconLoadStarted, 1) != 0) return;
@@ -1364,7 +1388,7 @@ namespace BlockBox.Views
                     if (IsDirectory) return;
                     if (!File.Exists(Path))
                         return;
-                    IconSource = await LoadShellIconAsync(Path);
+                    SetIcon(await LoadShellIconAsync(Path));
                 }
                 finally { throttle.Release(); }
             }

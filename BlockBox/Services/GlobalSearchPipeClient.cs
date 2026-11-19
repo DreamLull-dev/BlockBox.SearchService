@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -76,12 +77,13 @@ internal sealed class PipeSearchResponse
 
 internal sealed class PipeSearchHit
 {
-    public string VolumeId { get; init; } = "";
-    public long FileId { get; init; }
-    public long ParentId { get; init; }
-    public string Name { get; init; } = "";
-    public string Path { get; init; } = "";
-    public bool IsDirectory { get; init; }
-    public long Size { get; init; } = -1;
-    public long ModifiedTicks { get; init; }
+    [JsonPropertyName("volumeId")] public string VolumeId { get; init; } = "";
+    [JsonPropertyName("fileId")] public long FileId { get; init; }
+    [JsonPropertyName("parentId")] public long ParentId { get; init; }
+    [JsonPropertyName("name")] public string Name { get; init; } = "";
+    [JsonPropertyName("path")] public string Path { get; init; } = "";
+    [JsonPropertyName("isDirectory")] public bool IsDirectory { get; init; }
+    [JsonPropertyName("size")] public long Size { get; init; } = -1;
+    // 注意：服务端字段名是 "modified"（不是 modifiedTicks），必须显式映射。
+    [JsonPropertyName("modified")] public long ModifiedTicks { get; init; }
 }
