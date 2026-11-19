@@ -22,14 +22,10 @@ internal sealed class SearchPipeServer(string? clientSid)
 
     internal async Task RunAsync(CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(clientSid))
-        {
-            await Task.Delay(Timeout.Infinite, cancellationToken);
-            return;
-        }
-        try { clientSid = new System.Security.Principal.SecurityIdentifier(clientSid).Value; }
-        catch (ArgumentException ex) { throw new SecurityException("Invalid configured client SID", ex); }
-        string sddl = $"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;{clientSid})";
+        string sddl = BuildPipeSecurityDescriptor(clientSid);
+        ServiceLog.Write(clientSid is null
+            ? "Search pipe accepts authenticated local users (no client.sid)."
+            : "Search pipe is restricted to the configured client SID.");
         while (!cancellationToken.IsCancellationRequested)
         {
             try
@@ -51,6 +47,30 @@ internal sealed class SearchPipeServer(string? clientSid)
                 catch (OperationCanceledException) { return; }
             }
         }
+    }
+
+    /// <summary>
+    /// 有 client.sid（脚本安装）时只放行该用户；没有（伴侣 MSIX 安装不会执行安装脚本）时
+    /// 放行本机已认证用户。管道本身带 PIPE_REJECT_REMOTE_CLIENTS，协议也只返回文件名。
+    /// </summary>
+    private static string BuildPipeSecurityDescriptor(string? clientSid)
+    {
+        var descriptor = new StringBuilder("D:P(A;;GA;;;SY)(A;;GA;;;BA)");
+        if (!string.IsNullOrWhiteSpace(clientSid))
+        {
+            try
+            {
+                var sid = new System.Security.Principal.SecurityIdentifier(clientSid).Value;
+                descriptor.Append("(A;;GA;;;").Append(sid).Append(')');
+                return descriptor.ToString();
+            }
+            catch (ArgumentException)
+            {
+                // 配置写坏了就退回到“已认证用户”，否则服务会完全连不上。
+            }
+        }
+        descriptor.Append("(A;;GA;;;AU)");
+        return descriptor.ToString();
     }
 
     private async Task HandleClientAsync(NamedPipeServerStream pipe, CancellationToken cancellationToken)

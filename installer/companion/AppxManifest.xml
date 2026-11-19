@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  伴侣 MSIX：只包含全局搜索服务，供“不含服务的应用（例如 Microsoft Store 版）”在需要时单独安装。
+  构建时由 Build-CompanionMsix.ps1 替换 __VERSION__ / __PUBLISHER__ 两个占位符；
+  __PUBLISHER__ 必须和签名证书的主题完全一致。
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:desktop6="http://schemas.microsoft.com/appx/manifest/desktop/windows10/6"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap desktop6 rescap">
+
+  <Identity
+    Name="BlockBox.SearchService"
+    Publisher="__PUBLISHER__"
+    Version="__VERSION__"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>Block Box 搜索服务</DisplayName>
+    <PublisherDisplayName>BlockBox</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <!-- 打包服务从 Windows 10 2004（19041）起正式支持 -->
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="zh-CN" />
+    <Resource Language="en-US" />
+  </Resources>
+
+  <Capabilities>
+    <!-- 全信任桌面进程 + 打包服务：都是受限能力，侧载可用（本包不属于商店渠道）。
+         StartAccount=localSystem 需要 localSystemServices；packagedServices 一并声明。 -->
+    <rescap:Capability Name="runFullTrust" />
+    <rescap:Capability Name="packagedServices" />
+    <rescap:Capability Name="localSystemServices" />
+  </Capabilities>
+
+  <Applications>
+    <!-- 只承载服务，不出现在开始菜单；系统安装包时注册并启动服务 -->
+    <Application
+      Id="ServiceHost"
+      Executable="BlockBox.SearchService.exe"
+      EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="Block Box 搜索服务"
+        Description="为 Block Box 建立整盘文件索引"
+        BackgroundColor="#1F1F1F"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png"
+        AppListEntry="none" />
+      <Extensions>
+        <desktop6:Extension
+          Category="windows.service"
+          Executable="BlockBox.SearchService.exe"
+          EntryPoint="Windows.FullTrustApplication">
+          <desktop6:Service
+            Name="BlockBoxGlobalSearch"
+            StartAccount="localSystem"
+            StartupType="auto" />
+        </desktop6:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+</Package>

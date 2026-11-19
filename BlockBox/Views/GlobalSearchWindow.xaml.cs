@@ -24,6 +24,7 @@ using System.Threading.Tasks;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Windows.Storage.Streams;
 using Windows.Storage;
+using Windows.Storage.Pickers;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Graphics;
 
@@ -39,6 +40,7 @@ namespace BlockBox.Views
         private long _searchVersion;
         private bool _isInitialized;
         private bool _entranceAnimated;
+        private SearchServiceState _serviceState = SearchServiceState.Unknown;
         private bool _isLoadingMore;
         private bool _searchHasMore;
         private double _autoLoadOffset = double.NaN;
@@ -209,7 +211,7 @@ namespace BlockBox.Views
             // 否则两路异步结果会把底部的文字来回改写一次。
             // Everything shows the whole index before anything is typed; do the same whenever
             // the panel is opened so the list is never empty while the service is ready.
-            Search();
+            _ = RefreshServiceAvailabilityThenSearchAsync();
             // 正常情况下过渡在 RootGrid_Loaded 里启动；若内容在 Activate 期间就已加载完，
             // 这里补一次作为兜底，保证窗口不会一直停在透明状态。
             if (RootGrid.IsLoaded) StartEntranceAnimation();
@@ -1062,15 +1064,129 @@ namespace BlockBox.Views
 
         private async Task RefreshServiceStatusAsync()
         {
+            _serviceState = SearchServiceController.QueryState();
+            if (_serviceState is SearchServiceState.Running or SearchServiceState.Unknown)
+            {
+                HideServicePanel();
+                try
+                {
+                    var response = await _searchClient.SendAsync("status");
+                    StatusText.Text = LocalizeServiceMessage(response.Message ?? response.Status);
+                    return;
+                }
+                catch (Exception ex) when (ex is IOException or TimeoutException or System.UnauthorizedAccessException or InvalidOperationException)
+                {
+                }
+            }
+            ShowServicePanel(_serviceState);
+        }
+
+        /// <summary>
+        /// 打开搜索面板前先确认服务状态：没装/没运行就直接显示引导页，避免每次连接都等 5 秒超时。
+        /// </summary>
+        private async Task RefreshServiceAvailabilityThenSearchAsync()
+        {
+            SearchServiceState state = SearchServiceController.QueryState();
+            if (state is SearchServiceState.Running or SearchServiceState.Unknown)
+            {
+                HideServicePanel();
+                Search();
+                return;
+            }
+            ShowServicePanel(state);
+        }
+
+        private void ShowServicePanel(SearchServiceState state)
+        {
+            _serviceState = state;
+            ServiceMissingPanel.Visibility = Visibility.Visible;
+            ResultsList.Visibility = Visibility.Collapsed;
+            bool installed = state != SearchServiceState.NotInstalled;
+            ServiceMissingTitle.Text = LanguageService.Translate(installed ? "搜索服务未运行" : "需要安装搜索服务");
+            ServiceMissingText.Text = LanguageService.Translate(installed
+                ? "搜索服务已安装但没有运行。启动它需要管理员权限，启动后即可搜索整盘文件。"
+                : "全局搜索需要「Block Box 搜索服务」。它在后台为整盘建立文件索引（只读文件名、大小和时间），安装时需要管理员权限。");
+            ServiceMissingHint.Text = LanguageService.Translate("安装完成后会自动重新连接。");
+            ServiceMissingHint.Visibility = installed ? Visibility.Collapsed : Visibility.Visible;
+            DownloadServiceButton.Visibility = installed ? Visibility.Collapsed : Visibility.Visible;
+            DownloadServiceButton.Content = LanguageService.Translate("前往下载");
+            InstallServiceButton.Content = LanguageService.Translate(installed ? "启动服务" : "我已下载…");
+            StatusText.Text = LanguageService.Translate("搜索服务不可用。");
+        }
+
+        private void HideServicePanel()
+        {
+            if (ServiceMissingPanel.Visibility == Visibility.Collapsed && ResultsList.Visibility == Visibility.Visible) return;
+            ServiceMissingPanel.Visibility = Visibility.Collapsed;
+            ResultsList.Visibility = Visibility.Visible;
+        }
+
+        private async void DownloadService_Click(object sender, RoutedEventArgs e)
+        {
+            if (string.IsNullOrWhiteSpace(SupportInfo.ServiceDownloadUrl)) return;
+            await Windows.System.Launcher.LaunchUriAsync(new Uri(SupportInfo.ServiceDownloadUrl));
+        }
+
+        private async void InstallService_Click(object sender, RoutedEventArgs e)
+        {
+            if (_serviceState == SearchServiceState.NotInstalled)
+            {
+                await PickAndInstallServiceAsync();
+                return;
+            }
+
+            StatusText.Text = LanguageService.Translate("正在启动搜索服务…");
+            await SearchServiceController.TryStartAsync();
+            await WaitForServiceAsync();
+        }
+
+        /// <summary>让用户选择下载好的伴侣 MSIX，交给系统安装器（会弹 UAC），然后等待服务就绪。</summary>
+        private async Task PickAndInstallServiceAsync()
+        {
             try
             {
-                var response = await _searchClient.SendAsync("status");
-                StatusText.Text = LocalizeServiceMessage(response.Message ?? response.Status);
+                var picker = new FileOpenPicker
+                {
+                    SuggestedStartLocation = PickerLocationId.Downloads,
+                    ViewMode = PickerViewMode.List
+                };
+                picker.FileTypeFilter.Add(".msix");
+                picker.FileTypeFilter.Add(".msixbundle");
+                picker.FileTypeFilter.Add(".appx");
+                WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
+
+                StorageFile? file = await picker.PickSingleFileAsync();
+                if (file is null) return;
+
+                StatusText.Text = LanguageService.Translate("正在启动安装程序…");
+                if (!await Windows.System.Launcher.LaunchFileAsync(file))
+                {
+                    StatusText.Text = LanguageService.Translate("无法启动安装程序，请双击安装包后再试。");
+                    return;
+                }
+                await WaitForServiceAsync();
             }
-            catch (Exception ex) when (ex is IOException or TimeoutException or System.UnauthorizedAccessException)
+            catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
             {
-                StatusText.Text = LanguageService.Translate("搜索服务未连接，请先安装并启动服务。");
+                StatusText.Text = LanguageService.Translate("无法启动安装程序，请双击安装包后再试。");
             }
+        }
+
+        private async Task WaitForServiceAsync()
+        {
+            StatusText.Text = LanguageService.Translate("等待搜索服务就绪…");
+            for (int attempt = 0; attempt < 60; attempt++)
+            {
+                await Task.Delay(1000);
+                if (SearchServiceController.QueryState() == SearchServiceState.Running)
+                {
+                    HideServicePanel();
+                    Search();
+                    return;
+                }
+            }
+            StatusText.Text = LanguageService.Translate("安装未完成，请安装搜索服务后再试。");
+            ShowServicePanel(SearchServiceController.QueryState());
         }
 
         private async void Search() => await RunSearchAsync(resetSort: true);
@@ -1083,6 +1199,14 @@ namespace BlockBox.Views
         private async Task RunSearchAsync(bool resetSort)
         {
             if (!_isInitialized) return;
+            // 服务不可用时直接维持引导页，不发起会等 5 秒超时的管道连接。
+            if ((_serviceState is SearchServiceState.NotInstalled or SearchServiceState.Stopped)
+                && ServiceMissingPanel.Visibility == Visibility.Visible)
+            {
+                SearchServiceState live = SearchServiceController.QueryState();
+                if (live is SearchServiceState.Running or SearchServiceState.Unknown) HideServicePanel();
+                else { ShowServicePanel(live); return; }
+            }
             _sortRequestVersion++;
             if (resetSort)
             {

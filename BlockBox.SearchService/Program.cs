@@ -101,18 +101,16 @@ internal static class Program
         // 建索引只枚举 MFT，不带大小/时间；这里在后台逐步补齐，排序和显示才有数据可用。
         store.StartMetadataEnrichment(cancellationToken);
         var indexer = new IndexingCoordinator(store);
-        Task indexing = Task.CompletedTask;
         if (clientSid is null)
         {
-            ServiceLog.Write("Indexing is disabled because client.sid is missing.");
+            // 伴侣 MSIX 安装不会生成 client.sid：管道改为放行本机已认证用户，索引照常运行。
+            ServiceLog.Write("client.sid is missing; the search pipe will accept authenticated local users (MSIX companion install).");
         }
-        else
-        {
-            // Starting the indexer can perform synchronous volume/MFT work before its first
-            // await. Keep it off the service entry thread so the named pipe accepts clients
-            // immediately while a first-time index is being built.
-            indexing = Task.Run(() => indexer.IndexFixedNtfsVolumesAsync(cancellationToken), cancellationToken);
-        }
+
+        // Starting the indexer can perform synchronous volume/MFT work before its first
+        // await. Keep it off the service entry thread so the named pipe accepts clients
+        // immediately while a first-time index is being built.
+        Task indexing = Task.Run(() => indexer.IndexFixedNtfsVolumesAsync(cancellationToken), cancellationToken);
 
         // The pipe is the primary loop: it must stay up even if indexing fails, and indexing must
         // keep running if a client connection fails. Both end only when the service is stopped.
