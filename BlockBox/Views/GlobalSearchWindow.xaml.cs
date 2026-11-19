@@ -53,6 +53,7 @@ namespace BlockBox.Views
         private long _sortRequestVersion;
         private int _iconLoadLimit = 200;
         private readonly SemaphoreSlim _thumbnailSemaphore = new(4, 4);
+        private readonly SemaphoreSlim _metadataSemaphore = new(4, 4);
         public ObservableCollection<SearchResultItem> Results { get; } = new();
 
         // 缩略图悬停预览：停留 200ms 才弹出，最大 200×200 等比缩放。
@@ -873,8 +874,10 @@ namespace BlockBox.Views
 
         private async void ResultsList_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
         {
-            if (GetSearchResultItem(e.OriginalSource) is { } item)
-                await OpenSearchResultAsync(item);
+            if (GetSearchResultItem(e.OriginalSource) is not { } item) return;
+            // 左边缘是勾选框那一列：双点那里只当作勾选操作，不打开文件。
+            if (ResultsList.ContainerFromItem(item) is UIElement container && e.GetPosition(container).X < 36) return;
+            await OpenSearchResultAsync(item);
         }
 
         private static SearchResultItem? GetSearchResultItem(object source)
@@ -1025,6 +1028,8 @@ namespace BlockBox.Views
                 _iconLoadLimit = ((index / 200) + 1) * 200;
             if (index < _iconLoadLimit)
                 _ = item.LoadIconAsync(_thumbnailSemaphore);
+            // 行右侧的大小/修改时间按需读取：只对真正显示出来的行做文件元数据查询。
+            _ = item.LoadDisplayMetadataAsync(_metadataSemaphore);
         }
 
         private void Thumbnail_PointerEntered(object sender, PointerRoutedEventArgs e)
@@ -1328,6 +1333,7 @@ namespace BlockBox.Views
         private ImageSource? _iconSource;
         private int _iconLoadStarted;
         private int _sortMetadataLoaded;
+        private int _displayMetadataStarted;
         private bool? _isChecked;
         private bool _isRowHighlighted;
         public string Path { get; private set; }
@@ -1385,6 +1391,48 @@ namespace BlockBox.Views
             Path = path;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Path)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Name)));
+        }
+
+        /// <summary>行右侧显示的大小（目录或元数据还没读到时为空）。</summary>
+        public string SizeText => IsDirectory || LastWriteTimeUtc == default ? string.Empty : FormatSize(SizeBytes);
+
+        /// <summary>行右侧显示的修改时间。</summary>
+        public string ModifiedText => LastWriteTimeUtc == default
+            ? string.Empty
+            : LastWriteTimeUtc.ToLocalTime().ToString("g", System.Globalization.CultureInfo.CurrentCulture);
+
+        /// <summary>
+        /// 读一次文件元数据并通知界面刷新大小/时间。只对真正显示出来的行调用（列表虚拟化），
+        /// 同一行只做一次；读不到（文件已删除/无权限）就保持空白。
+        /// </summary>
+        internal async Task LoadDisplayMetadataAsync(SemaphoreSlim throttle)
+        {
+            if (Interlocked.Exchange(ref _displayMetadataStarted, 1) != 0) return;
+            try
+            {
+                await throttle.WaitAsync();
+                try { await Task.Run(LoadSortMetadata); }
+                finally { throttle.Release(); }
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException and not StackOverflowException)
+            {
+                return;
+            }
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(SizeText)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ModifiedText)));
+        }
+
+        private static string FormatSize(long bytes)
+        {
+            string[] units = { "B", "KB", "MB", "GB", "TB", "PB" };
+            double value = bytes;
+            int unit = 0;
+            while (value >= 1024 && unit < units.Length - 1)
+            {
+                value /= 1024;
+                unit++;
+            }
+            return unit == 0 ? $"{bytes} {units[0]}" : $"{value:0.#} {units[unit]}";
         }
 
         internal void LoadSortMetadata()        {
