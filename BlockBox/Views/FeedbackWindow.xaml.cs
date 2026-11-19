@@ -29,7 +29,6 @@ namespace BlockBox.Views
             BuildContactRows();
 
             ModalWindowHelper.ConfigureBorderlessWindow(this);
-            WindowFadeController.Prepare(this);
             RootGrid.Loaded += RootGrid_Loaded;
         }
 
@@ -103,7 +102,11 @@ namespace BlockBox.Views
             {
                 System.Diagnostics.Debug.WriteLine($"[反馈窗口] 尺寸调整失败: {ex}");
             }
-            WindowFadeController.FadeAndScaleIn(this, RootGrid);
+
+            // 只用内容自身的透明度/缩放做入场：之前用 SetLayeredWindowAttributes 对整个 HWND
+            // 做逐帧透明（配合亚克力背景）会让鼠标悬停/焦点状态反复重算，看起来一闪一闪。
+            WindowFadeController.FadeContentIn(RootGrid);
+            Activate();
         }
 
         private async void SendMail_Click(object sender, RoutedEventArgs e)
@@ -121,6 +124,6 @@ namespace BlockBox.Views
             Clipboard.SetContent(package);
         }
 
-        private void Close_Click(object sender, RoutedEventArgs e) => WindowFadeController.CloseWithAnimation(this);
+        private void Close_Click(object sender, RoutedEventArgs e) => Close();
     }
 }

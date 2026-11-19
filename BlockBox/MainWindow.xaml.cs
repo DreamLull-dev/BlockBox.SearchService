@@ -320,7 +320,8 @@ namespace BlockBox
             }
 
             _acrylicController.SetSystemBackdropConfiguration(_acrylicConfiguration);
-            Activated += MainWindow_Activated;
+            // 激活事件在构造函数里统一挂一次；这里再挂会导致每次激活都跑两遍
+            // （亚克力输入态和背景视频的暂停/恢复被重复执行）。
         }
 
         public MainWindow()
