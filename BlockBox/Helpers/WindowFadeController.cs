@@ -76,12 +76,13 @@ namespace BlockBox.Helpers
             try
             {
                 root.Opacity = 0;
+                // 用 RenderTransformOrigin 居中缩放：Loaded 时 ActualWidth 可能还是 0，
+                // 用 CenterX/CenterY 会把缩放中心算到左上角，看上去是从角上弹出。
+                root.RenderTransformOrigin = new Windows.Foundation.Point(0.5, 0.5);
                 var transform = new CompositeTransform
                 {
                     ScaleX = 0.97,
-                    ScaleY = 0.97,
-                    CenterX = Math.Max(1, root.ActualWidth) / 2,
-                    CenterY = Math.Max(1, root.ActualHeight) / 2
+                    ScaleY = 0.97
                 };
                 root.RenderTransform = transform;
 
