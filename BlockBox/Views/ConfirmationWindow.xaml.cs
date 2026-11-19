@@ -10,13 +10,15 @@ namespace BlockBox.Views
     public sealed partial class ConfirmationWindow : Window
     {
         private bool _isSized;
+        private readonly Window? _centerOwner;
 
         public int Result { get; private set; }
 
         public ConfirmationWindow(string title, object content, string primaryText, string cancelText,
-            string? secondaryText = null, int defaultResult = 0)
+            string? secondaryText = null, int defaultResult = 0, Window? centerOwner = null)
         {
             InitializeComponent();
+            _centerOwner = centerOwner;
             BlockBox.Helpers.WindowAcrylicHelper.Apply(this);
             TitleText.Text = LanguageService.Translate(title);
             MessagePresenter.Content = content is string text
@@ -53,7 +55,7 @@ namespace BlockBox.Views
                 int width = (int)(520 * scale);
                 int height = (int)(Math.Clamp(RootGrid.ActualHeight + 48, 220, 560) * scale);
                 AppWindow.Resize(new SizeInt32(width, height));
-                ModalWindowHelper.CenterOnOwner(App.MainWindow, this);
+                ModalWindowHelper.CenterOnOwner(_centerOwner ?? App.MainWindow, this);
             }
             catch (Exception ex)
             {

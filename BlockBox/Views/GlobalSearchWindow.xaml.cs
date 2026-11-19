@@ -940,17 +940,11 @@ namespace BlockBox.Views
             string prompt = targets.Count == 1
                 ? LanguageService.TranslateFormat("确定将「{name}」移到回收站吗？", ("{name}", targets[0].Name))
                 : LanguageService.TranslateFormat("确定将选中的 {count} 项移到回收站吗？", ("{count}", targets.Count));
-            var dialog = new ContentDialog
-            {
-                Title = LanguageService.Translate("删除"),
-                Content = prompt,
-                PrimaryButtonText = LanguageService.Translate("移到回收站"),
-                CloseButtonText = LanguageService.Translate("取消"),
-                DefaultButton = ContentDialogButton.Close,
-                XamlRoot = RootGrid.XamlRoot
-            };
-            LanguageService.ApplyDialog(dialog, LanguageService.CurrentLanguageCode);
-            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+            // 复用主窗体的确认窗口（ConfirmationWindow），和主界面删除时的观感、按钮一致。
+            var confirm = new ConfirmationWindow("删除", prompt, "移到回收站", "取消",
+                centerOwner: CanModifyShell ? null : this);
+            await ModalWindowHelper.ShowModalAsync(this, confirm);
+            if (confirm.Result != 1) return;
 
             int deleted = 0;
             foreach (var item in targets)
