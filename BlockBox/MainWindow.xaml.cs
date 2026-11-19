@@ -1367,9 +1367,13 @@ namespace BlockBox
         // ==================== 帮助 ====================
         private async void MenuAbout_Click(object sender, RoutedEventArgs e)
         {
-            if (!_isSettingsVisible)
-                await OpenSettingsAsync();
-            // SettingsViewControl.SwitchToPage("About");   // 如果你加了切页方法
+            // 直接打开设置里的“关于我们”页，而不是停在默认页。
+            if (_isSettingsVisible)
+            {
+                SettingsViewControl.SelectPage("About");
+                return;
+            }
+            await OpenSettingsAsync("About");
         }
 
 
@@ -2922,7 +2926,7 @@ namespace BlockBox
             await OpenSettingsAsync();
         }
 
-        private async Task OpenSettingsAsync()
+        private async Task OpenSettingsAsync(string? page = null)
         {
             if (_isSettingsVisible)
                 return;
@@ -2942,6 +2946,7 @@ namespace BlockBox
             SettingsViewControl.Visibility = Visibility.Visible;
             SettingsViewControl.Opacity = 0;
             SettingsViewControl.ResetToDefaultPage();
+            if (page is not null) SettingsViewControl.SelectPage(page);
 
             var transform = new TranslateTransform { X = 40 };
             SettingsViewControl.RenderTransform = transform;

@@ -1,4 +1,5 @@
 using BlockBox.Helpers;
+using BlockBox.Services;
 using Microsoft.Graphics.Canvas.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
@@ -118,10 +119,21 @@ namespace BlockBox.Views
     }
     public sealed partial class SettingsView : UserControl
     {
-        private void CheckUpdatesButton_Click(object sender, RoutedEventArgs e)
+        /// <summary>“关于我们”里显示的版本号（打包版取商店包版本，开发版取程序集版本）。</summary>
+        public string VersionText =>
+            LanguageService.TranslateFormat("版本 {version}", ("{version}", AppUpdateService.VersionText));
+
+        private async void CheckUpdatesButton_Click(object sender, RoutedEventArgs e)
         {
-            //var window = new UnimplementedWindow();
-           // window.Activate();
+            // 和标题栏“帮助 → 检查更新”走同一套流程。
+            if (App.MainWindow is not { } owner) return;
+            await UpdatePromptService.CheckAsync(owner);
+        }
+
+        private async void FeedbackButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (App.MainWindow is not { } owner) return;
+            await UpdatePromptService.ShowFeedbackAsync(owner);
         }
         public double SettingsFontSize => Math.Clamp(
             FontSizeHelper.SettingsBodyInitialFontSize + FontSizeHelper.CurrentFontSizeOffset,
@@ -447,6 +459,17 @@ namespace BlockBox.Views
             _loading = false;
 
             FontSizeHelper.ApplyGlobalFontSizeToTree(this);
+
+            // 官网/GitHub 链接：没配置就隐藏，避免留一个打不开的死链。
+            if (string.IsNullOrWhiteSpace(SupportInfo.GitHubUrl))
+            {
+                WebsiteButton.Visibility = Visibility.Collapsed;
+            }
+            else
+            {
+                WebsiteButton.Visibility = Visibility.Visible;
+                WebsiteButton.NavigateUri = new Uri(SupportInfo.GitHubUrl);
+            }
 
             DispatcherQueue.TryEnqueue(ApplyPendingTextColor);
             DispatcherQueue.TryEnqueue(ApplySettingsButtonTextColors);
@@ -1403,6 +1426,20 @@ namespace BlockBox.Views
                 byte.Parse(hex.Substring(2, 2), NumberStyles.HexNumber),
                 byte.Parse(hex.Substring(4, 2), NumberStyles.HexNumber),
                 byte.Parse(hex.Substring(6, 2), NumberStyles.HexNumber));
+        }
+
+        /// <summary>切到指定 Tag 的设置页（例如从“关于 Block Box”直接打开“关于我们”）。</summary>
+        public void SelectPage(string tag)
+        {
+            for (int i = 0; i < SettingsCategoryList.Items.Count; i++)
+            {
+                if (SettingsCategoryList.Items[i] is ListViewItem item &&
+                    string.Equals(item.Tag as string, tag, StringComparison.Ordinal))
+                {
+                    SettingsCategoryList.SelectedIndex = i;
+                    return;
+                }
+            }
         }
 
         public void ResetToDefaultPage()

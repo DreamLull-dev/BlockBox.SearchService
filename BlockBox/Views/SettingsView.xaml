@@ -1289,7 +1289,7 @@
                         <Border Padding="16" CornerRadius="8" BorderThickness="0.6" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}">
                             <StackPanel Spacing="10">
                                 <TextBlock Text="BlockBox Program File Manager" FontSize="{x:Bind helpers:FontSizeHelper.SettingsTitleInitialFontSize}" FontWeight="SemiBold" />
-                                <TextBlock Text="{x:Bind helpers:LanguageService.Translate('版本：开发版'), Mode=OneWay}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock Text="{x:Bind VersionText}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                 <Button x:Name="CheckUpdatesButton"
                                         Tag="SkipForeground"
                                         Content="{x:Bind helpers:LanguageService.Translate('检查更新'), Mode=OneWay}"
@@ -1311,7 +1311,8 @@
                                         Opacity="1"
                                         Style="{StaticResource CustomAddButtonStyle}"
                                         Background="{x:Bind PrimaryButtonBackground, Mode=OneWay}"
-                                        CornerRadius="17" HorizontalAlignment="Left" />
+                                        CornerRadius="17" HorizontalAlignment="Left"
+                                        Click="FeedbackButton_Click" />
                             </StackPanel>
                         </Border>
                     </StackPanel>
