@@ -105,8 +105,8 @@
                     Opened="TitleBarMenuFlyout_Opened"
                     Closed="TitleBarMenuFlyout_Closed">
                             <MenuFlyoutItem Text="{x:Bind helpers:LanguageService.Translate('操作手册'), Mode=OneWay}" IsEnabled="False"/>
-                            <MenuFlyoutItem Text="{x:Bind helpers:LanguageService.Translate('反馈'), Mode=OneWay}" IsEnabled="False"/>
-                            <MenuFlyoutItem Text="{x:Bind helpers:LanguageService.Translate('检查更新'), Mode=OneWay}" IsEnabled="False"/>
+                            <MenuFlyoutItem Text="{x:Bind helpers:LanguageService.Translate('反馈'), Mode=OneWay}" Click="MenuFeedback_Click"/>
+                            <MenuFlyoutItem Text="{x:Bind helpers:LanguageService.Translate('检查更新'), Mode=OneWay}" Click="MenuCheckUpdates_Click"/>
                             <MenuFlyoutSeparator/>
                             <MenuFlyoutItem Text="{x:Bind helpers:LanguageService.Translate('关于 Block Box'), Mode=OneWay}" Click="MenuAbout_Click"/>
                         </MenuFlyout>

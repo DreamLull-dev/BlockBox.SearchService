@@ -14,7 +14,7 @@ namespace BlockBox.Views
 
         public int Result { get; private set; }
 
-        public ConfirmationWindow(string title, object content, string primaryText, string cancelText,
+        public ConfirmationWindow(string title, object content, string primaryText, string? cancelText = "取消",
             string? secondaryText = null, int defaultResult = 0, Window? centerOwner = null)
         {
             InitializeComponent();
@@ -25,7 +25,11 @@ namespace BlockBox.Views
                 ? new TextBlock { Text = LanguageService.Translate(text), TextWrapping = TextWrapping.Wrap }
                 : content;
             PrimaryButton.Content = LanguageService.Translate(primaryText);
-            CancelButton.Content = LanguageService.Translate(cancelText);
+            // 取消文案为空时做成只有“确定”的信息框。
+            if (string.IsNullOrEmpty(cancelText))
+                CancelButton.Visibility = Visibility.Collapsed;
+            else
+                CancelButton.Content = LanguageService.Translate(cancelText);
             if (!string.IsNullOrWhiteSpace(secondaryText))
             {
                 SecondaryButton.Content = LanguageService.Translate(secondaryText);
