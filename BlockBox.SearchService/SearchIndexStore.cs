@@ -69,23 +69,26 @@ internal sealed class SearchIndexStore
     /// <summary>Loads every volume that can answer queries (ready or mid-scan/resume) into memory.</summary>
     private void LoadCatalog()
     {
-        using var connection = Open();
         var volumes = new List<(string VolumeId, string RootPath, string State)>();
-        using (var command = connection.CreateCommand())
+        using (var connection = Open())
         {
+            using var command = connection.CreateCommand();
             command.CommandText = "SELECT VolumeId,RootPath,State FROM Volumes";
             using var reader = command.ExecuteReader();
             while (reader.Read()) volumes.Add((reader.GetString(0), reader.GetString(1), reader.GetString(2)));
         }
-        foreach (var volume in volumes)
+
+        var loadable = volumes.Where(v => v.State is "Ready" or "Indexing").ToArray();
+        if (loadable.Length == 0) return;
+
+        // 每个卷用独立连接并行读取：启动耗时从“所有卷串行累加”变成“最慢的那个卷”。
+        Parallel.ForEach(loadable, volume =>
         {
-            // "Indexing" volumes are loaded too: an interrupted scan resumes from its cursor and
-            // only appends the remaining records, so the first part would otherwise be missing.
-            if (volume.State is not ("Ready" or "Indexing")) continue;
+            using var connection = Open();
             var (count, characters) = CountEntries(connection, volume.VolumeId);
             _catalog.LoadVolume(volume.VolumeId, volume.RootPath, volume.State, count, characters,
                 ReadEntries(connection, volume.VolumeId));
-        }
+        });
     }
 
     private static (int Count, long Characters) CountEntries(SqliteConnection connection, string volumeId)
@@ -324,7 +327,7 @@ internal sealed class SearchIndexStore
         }.ToString());
         connection.Open();
         using var pragma = connection.CreateCommand();
-        pragma.CommandText = "PRAGMA busy_timeout=15000; PRAGMA synchronous=NORMAL; PRAGMA journal_size_limit=67108864;";
+        pragma.CommandText = "PRAGMA busy_timeout=15000; PRAGMA synchronous=NORMAL; PRAGMA journal_size_limit=67108864; PRAGMA mmap_size=268435456; PRAGMA cache_size=-65536;";
         pragma.ExecuteNonQuery();
         return connection;
     }

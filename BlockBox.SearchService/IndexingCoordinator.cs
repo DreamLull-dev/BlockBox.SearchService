@@ -171,7 +171,9 @@ internal sealed class IndexingCoordinator(SearchIndexStore store)
                 _store.ApplyJournalBatch(volumeId, journalId, changes, markReady: true);
                 cursor = changes.NextUsn;
             }
-            else await Task.Delay(250, cancellationToken);
+            // 磁盘上持续有临时文件改动时，journal 会一批接一批地来；每批都开一次 SQLite
+            // 事务会把空闲 CPU 拉起来。统一限速到约 4 批/秒，实时性感知不到差别。
+            await Task.Delay(250, cancellationToken);
         }
         return false;
     }

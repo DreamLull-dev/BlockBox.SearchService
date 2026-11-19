@@ -222,6 +222,19 @@ for (int round = 0; round < 2; round++)
     }
 }
 
+// ---------------------------------------------------------------- long→int map
+var map = new LongIntMap(4);
+for (int i = 0; i < 100_000; i++) map.Set(i * 7L - 50_000, i);
+bool mapOk = map.Count == 100_000;
+for (int i = 0; i < 100_000 && mapOk; i++)
+    mapOk = map.TryGetValue(i * 7L - 50_000, out int stored) && stored == i;
+Check(mapOk, "LongIntMap stores and returns 100k entries");
+map.Set(-123, 7);
+map.Set(-123, 9);
+Check(map.TryGetValue(-123, out int overwritten) && overwritten == 9 && map.Count == 100_001,
+    "LongIntMap overwrites existing keys without growing");
+Check(!map.TryGetValue(999_999_999, out _), "LongIntMap reports missing keys");
+
 // ---------------------------------------------------------------- durable snapshot round trip
 string storeDirectory = Path.Combine(Path.GetTempPath(), "bb-search-store-" + Guid.NewGuid().ToString("N"));
 string storePath = Path.Combine(storeDirectory, "search-index.db");

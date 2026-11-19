@@ -103,15 +103,40 @@ internal sealed class SearchCatalog
             cursor = new Cursor(afterName!, afterFolded, afterVolumeId!, afterFileId!.Value, rank, descending);
         }
 
-        var matches = new MatchBuffer(limit + 1, new MatchComparer(descending));
+        var comparer = new MatchComparer(descending);
         lock (_sync)
         {
-            foreach (VolumeIndex volume in _volumes.Values)
+            VolumeIndex[] ready = _volumes.Values
+                .Where(volume => string.Equals(volume.State, "Ready", StringComparison.Ordinal))
+                .ToArray();
+            if (ready.Length == 0) return new List<SearchHit>();
+
+            List<Match> selected;
+            if (ready.Length == 1)
             {
-                if (!string.Equals(volume.State, "Ready", StringComparison.Ordinal)) continue;
-                volume.Collect(needle, exactPrefix, extensions, cursor, hasCursor, matches);
+                var single = new MatchBuffer(limit + 1, comparer);
+                ready[0].Collect(needle, exactPrefix, extensions, cursor, hasCursor, single);
+                selected = single.Drain();
             }
-            List<Match> selected = matches.Drain();
+            else
+            {
+                // 每个卷独立扫描、各自只保留“页大小”的候选，最后合并：多卷机器上扫描耗时
+                // 按卷摊开，单卷查询仍然走上面的直通路径。
+                var buffers = new MatchBuffer[ready.Length];
+                Parallel.For(0, ready.Length, i =>
+                {
+                    var buffer = new MatchBuffer(limit + 1, comparer);
+                    ready[i].Collect(needle, exactPrefix, extensions, cursor, hasCursor, buffer);
+                    buffers[i] = buffer;
+                });
+
+                var merged = new List<Match>((limit + 1) * ready.Length);
+                foreach (var buffer in buffers) merged.AddRange(buffer.Drain());
+                merged.Sort(comparer);
+                if (merged.Count > limit + 1) merged.RemoveRange(limit + 1, merged.Count - limit - 1);
+                selected = merged;
+            }
+
             var results = new List<SearchHit>(selected.Count);
             foreach (Match match in selected) results.Add(match.Volume.CreateHit(match.Index));
             return results;
@@ -262,7 +287,7 @@ internal sealed class VolumeIndex
     private int _nameUsed;
     private byte[] _foldedNames;
     private int _foldedUsed;
-    private Dictionary<long, int> _heads;
+    private LongIntMap _heads;   // 见 LongIntMap：文件引用号 → 最近一条记录下标
 
     internal string VolumeId { get; }
     internal string RootPath { get; }
@@ -275,7 +300,7 @@ internal sealed class VolumeIndex
         State = state;
         capacity = Math.Max(capacity, 4);
         _entries = new Entry[capacity];
-        _heads = new Dictionary<long, int>(capacity);
+        _heads = new LongIntMap(capacity);
         int nameCapacity = (int)Math.Clamp(characters + characters / 8, 256, int.MaxValue - 64);
         _names = new char[nameCapacity];
         // UTF-8 of a mostly-ASCII name is about as long as its UTF-16 form, so this skips the
@@ -355,7 +380,7 @@ internal sealed class VolumeIndex
             NextSibling = _heads.TryGetValue(fileId, out int head) ? head : -1,
             IsDirectory = isDirectory
         };
-        _heads[fileId] = index;
+        _heads.Set(fileId, index);
     }
 
     private void EnsureNameCapacity(int additional)
@@ -440,7 +465,7 @@ internal sealed class VolumeIndex
         var entries = new Entry[Math.Max(4, live)];
         var names = new char[Math.Max(256, _nameUsed)];
         var folded = new byte[Math.Max(256, _foldedUsed)];
-        var heads = new Dictionary<long, int>(live);
+        var heads = new LongIntMap(live);
         int index = 0, nameOffset = 0, foldOffset = 0;
         for (int i = 0; i < _count; i++)
         {
@@ -459,7 +484,7 @@ internal sealed class VolumeIndex
                 NextSibling = heads.TryGetValue(source.FileId, out int head) ? head : -1,
                 IsDirectory = source.IsDirectory
             };
-            heads[source.FileId] = index;
+            heads.Set(source.FileId, index);
             nameOffset += source.NameLength;
             foldOffset += source.FoldLength;
             index++;
