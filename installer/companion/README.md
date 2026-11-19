@@ -25,6 +25,12 @@
     -Publisher "CN=你的证书主题" `
     -CertPath .\certs\BlockBox.pfx `
     -CertPassword "证书密码"
+
+# 证书在 USB 令牌 / 证书存储里（私钥不能导出）时，用指纹签名
+.\installer\companion\Build-CompanionMsix.ps1 `
+    -Version 1.0.0.0 `
+    -Publisher "CN=你的证书主题" `
+    -CertThumbprint "证书指纹"
 ```
 
 产物在 `installer\companion\out\BlockBox.SearchService_<版本>_x64.msix`。

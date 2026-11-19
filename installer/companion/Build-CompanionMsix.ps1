@@ -20,6 +20,9 @@
 .PARAMETER CertPassword
     PFX 密码。
 
+.PARAMETER CertThumbprint
+    证书指纹（USB 令牌 / 证书存储里的证书，私钥不能导出成 PFX 时使用）。
+
 .PARAMETER OutputDirectory
     输出目录，默认 <本目录>\out。
 #>
@@ -28,6 +31,7 @@ param(
     [string] $Publisher = 'CN=BlockBox',
     [string] $CertPath = '',
     [string] $CertPassword = '',
+    [string] $CertThumbprint = '',
     [string] $OutputDirectory = ''
 )
 
@@ -103,6 +107,20 @@ if (-not [string]::IsNullOrWhiteSpace($CertPath)) {
     }
     $sign = $true
 }
+elseif (-not [string]::IsNullOrWhiteSpace($CertThumbprint)) {
+    # USB 令牌 / 证书存储里的证书（私钥不能导出成 PFX 时用这个）
+    $thumb = $CertThumbprint.Replace(' ', '')
+    $certificate = Get-ChildItem Cert:\CurrentUser\My, Cert:\LocalMachine\My -ErrorAction SilentlyContinue |
+        Where-Object { $_.Thumbprint -eq $thumb } |
+        Select-Object -First 1
+    if (-not $certificate) {
+        throw "在本机证书存储里找不到指纹为 $CertThumbprint 的证书。"
+    }
+    if ($certificate.Subject -ne $Publisher) {
+        throw "Publisher 与证书主题不一致：证书是 '$($certificate.Subject)'，参数是 '$Publisher'。"
+    }
+    $sign = $true
+}
 
 $outputRoot = if ([string]::IsNullOrWhiteSpace($OutputDirectory)) { Join-Path $PSScriptRoot 'out' } else { $OutputDirectory }
 New-Item -ItemType Directory -Force -Path $outputRoot | Out-Null
@@ -117,7 +135,12 @@ if ($LASTEXITCODE -ne 0) { throw 'makeappx 打包失败。' }
 if ($sign) {
     $signTool = Find-SdkTool 'signtool'
     Write-Host "签名：$signTool"
-    & $signTool sign /fd SHA256 /f $resolvedCert /p $CertPassword $msixPath
+    if (-not [string]::IsNullOrWhiteSpace($CertThumbprint)) {
+        & $signTool sign /fd SHA256 /sha1 ($CertThumbprint.Replace(' ', '')) $msixPath
+    }
+    else {
+        & $signTool sign /fd SHA256 /f $resolvedCert /p $CertPassword $msixPath
+    }
     if ($LASTEXITCODE -ne 0) { throw 'signtool 签名失败。' }
 }
 else {
