@@ -69,6 +69,9 @@ namespace BlockBox.Views
             _thumbnailPreviewTimer.Interval = TimeSpan.FromMilliseconds(200);
             _thumbnailPreviewTimer.IsRepeating = false;
             _thumbnailPreviewTimer.Tick += (_, _) => _ = ShowThumbnailPreviewAsync();
+            // TextBox/ListView 内部可能先把按键标记为已处理，用 handledEventsToo 保证能收到。
+            QueryBox.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler(QueryBox_KeyDown), true);
+            ResultsList.AddHandler(UIElement.KeyDownEvent, new KeyEventHandler(ResultsList_KeyDown), true);
             // 与回收站等窗口保持同一顺序：先应用亚克力和标题栏样式，最后再把 HWND 置为全透明。
             // 反过来的话，后设置样式的代码会让窗口短暂地以不透明状态绘制一帧，表现为闪烁。
             WindowAcrylicHelper.Apply(this);
@@ -216,18 +219,39 @@ namespace BlockBox.Views
 
         private void QueryBox_KeyDown(object sender, KeyRoutedEventArgs e)
         {
+            // ↓ 从搜索框进入结果列表；列表里再按 ↑ 会回到搜索框。
+            if (e.Key == Windows.System.VirtualKey.Down && Results.Count > 0)
+            {
+                e.Handled = true;
+                int index = _highlightedResult is null ? 0 : Math.Clamp(Results.IndexOf(_highlightedResult), 0, Results.Count - 1);
+                HighlightResult(Results[index]);
+                ResultsList.ScrollIntoView(Results[index]);
+                ResultsList.Focus(FocusState.Programmatic);
+                return;
+            }
+
             if (e.Key != Windows.System.VirtualKey.Enter) return;
             e.Handled = true;
-            if (!string.IsNullOrWhiteSpace(QueryBox.Text)) SearchHistoryStore.Add(QueryBox.Text);
+            RecordCurrentQuery();
             Search();
         }
+
+        /// <summary>用户点到搜索结果上、或点到搜索框外的其它地方时，记录这次搜索。</summary>
+        private void RecordCurrentQuery()
+        {
+            string query = QueryBox.Text.Trim();
+            if (query.Length == 0) return;
+            SearchHistoryStore.Add(query);
+        }
+
+        private void RootGrid_Tapped(object sender, TappedRoutedEventArgs e) => RecordCurrentQuery();
 
         /// <summary>搜索历史下拉：点选一条直接填入并搜索。</summary>
         private void HistoryButton_Click(object sender, RoutedEventArgs e)
         {
             IReadOnlyList<string> entries = SearchHistoryStore.Get();
             var flyout = new Flyout();
-            var panel = new StackPanel { Width = 260, Spacing = 0 };
+            var panel = new StackPanel { Width = 240, Spacing = 0 };
 
             if (entries.Count == 0)
             {
@@ -246,7 +270,7 @@ namespace BlockBox.Views
                     var button = new Button
                     {
                         Content = query,
-                        Width = 260,
+                        Width = 240,
                         Height = 34,
                         Padding = new Thickness(12, 0, 8, 0),
                         CornerRadius = new CornerRadius(8),
@@ -256,7 +280,7 @@ namespace BlockBox.Views
                         Style = (Style)Application.Current.Resources["MenuItemButtonStyle"]
                     };
                     LanguageService.ApplyGeneratedButtonSize(button);
-                    button.Width = 260;
+                    button.Width = 240;
                     button.Height = 34;
                     button.Click += (_, _) =>
                     {
@@ -288,7 +312,7 @@ namespace BlockBox.Views
                     Style = (Style)Application.Current.Resources["MenuItemButtonStyle"]
                 };
                 LanguageService.ApplyGeneratedButtonSize(clear);
-                clear.Width = 260;
+                clear.Width = 240;
                 clear.Height = 34;
                 clear.Click += (_, _) =>
                 {
@@ -304,9 +328,10 @@ namespace BlockBox.Views
                 : new Style(typeof(FlyoutPresenter));
             flyout.ShouldConstrainToRootBounds = false;
             LanguageService.RegisterDynamicRoot(panel);
-            flyout.ShowAt(HistoryButton, new FlyoutShowOptions
+            flyout.ShowAt(SearchBoxBorder, new FlyoutShowOptions
             {
-                Position = new Windows.Foundation.Point(0, HistoryButton.ActualHeight),
+                // 锚在搜索框外框上，菜单与搜索框左对齐、向下展开。
+                Position = new Windows.Foundation.Point(0, SearchBoxBorder.ActualHeight),
                 Placement = FlyoutPlacementMode.BottomEdgeAlignedLeft,
                 ShowMode = FlyoutShowMode.Standard
             });
@@ -573,6 +598,8 @@ namespace BlockBox.Views
         {
             if (GetSearchResultItem(e.OriginalSource) is not { } item) return;
             HighlightResult(item);
+            // 点到结果上说明这次查询有用，顺手记进历史。
+            RecordCurrentQuery();
             // 鼠标点过一行后把焦点交给列表，方向键/Enter 能接着用。
             ResultsList.Focus(FocusState.Programmatic);
         }
@@ -587,10 +614,17 @@ namespace BlockBox.Views
                 case Windows.System.VirtualKey.Down:
                 {
                     int current = _highlightedResult is null ? -1 : Results.IndexOf(_highlightedResult);
+                    if (e.Key == Windows.System.VirtualKey.Up && current <= 0)
+                    {
+                        // 已经在第一条，再往上就回到搜索框。
+                        QueryBox.Focus(FocusState.Programmatic);
+                        e.Handled = true;
+                        return;
+                    }
                     int next = e.Key == Windows.System.VirtualKey.Down
                         ? Math.Min(Results.Count - 1, current + 1)
-                        : Math.Max(0, current - 1);
-                    if (next < 0 || next >= Results.Count) return;
+                        : current - 1;
+                    if (next < 0) next = 0;
                     HighlightResult(Results[next]);
                     ResultsList.ScrollIntoView(Results[next]);
                     e.Handled = true;

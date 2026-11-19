@@ -4,14 +4,14 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:BlockBox.Views"
     Title="全局搜索">
-    <Grid x:Name="RootGrid" Padding="4" RowSpacing="5" Background="Transparent" SizeChanged="RootGrid_SizeChanged">
+    <Grid x:Name="RootGrid" Padding="4" RowSpacing="5" Background="Transparent" SizeChanged="RootGrid_SizeChanged" Tapped="RootGrid_Tapped">
         <Grid.RowDefinitions><RowDefinition Height="38"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <Grid x:Name="DragRegion" Background="Transparent" Tag="SkipGlobalFontSize">
             <TextBlock Text="全局搜索" Margin="2,-8,0,0" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center" IsHitTestVisible="False"/>
         </Grid>
         <Grid Grid.Row="1" ColumnSpacing="8">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="110"/></Grid.ColumnDefinitions>
-            <Border Grid.Column="0" Height="32" CornerRadius="15" BorderThickness="1"
+            <Border x:Name="SearchBoxBorder" Grid.Column="0" Height="32" CornerRadius="15" BorderThickness="1"
                     BorderBrush="#40FFFFFF"
                     Background="#14FFFFFF" Padding="8,0">
                 <Grid>
@@ -19,7 +19,6 @@
                     <FontIcon Grid.Column="0" Glyph="&#xE721;" FontSize="14" VerticalAlignment="Center" Margin="0,0,8,0"
                               Foreground="{ThemeResource TextFillColorPrimaryBrush}"/>
                     <TextBox x:Name="QueryBox" Grid.Column="1" PlaceholderText="搜索..." TextChanged="QueryBox_TextChanged"
-                             KeyDown="QueryBox_KeyDown"
                              Style="{StaticResource NoClearButtonTextBoxStyle}"
                              BorderThickness="0" Background="Transparent" Padding="0" VerticalAlignment="Center"
                              Foreground="{ThemeResource TextFillColorPrimaryBrush}"
@@ -62,8 +61,7 @@
         <Border Grid.Row="2" CornerRadius="8" BorderThickness="1"
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                 Background="#2AFFFFFF">
-        <ListView x:Name="ResultsList" SelectionMode="None" IsItemClickEnabled="False" Loaded="ResultsList_Loaded" ContainerContentChanging="ResultsList_ContainerContentChanging"
-                  KeyDown="ResultsList_KeyDown"
+        <ListView x:Name="ResultsList" SelectionMode="None" IsItemClickEnabled="False" IsTabStop="True" Loaded="ResultsList_Loaded" ContainerContentChanging="ResultsList_ContainerContentChanging"
                   RightTapped="ResultsList_RightTapped" DoubleTapped="ResultsList_DoubleTapped"
                   Background="Transparent" BorderThickness="0" CornerRadius="8">
             <ListView.ItemContainerStyle>
