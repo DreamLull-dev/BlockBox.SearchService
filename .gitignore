@@ -3,6 +3,10 @@ bin/
 obj/
 publish/
 
+# 打包产物（zip / msix / Inno 输出，不要提交到仓库）
+installer/companion/out/
+dist/
+
 # Visual Studio
 .vs/
 *.user

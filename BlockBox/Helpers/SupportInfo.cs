@@ -16,8 +16,8 @@ namespace BlockBox.Helpers
         /// <summary>Microsoft Store 产品 ID（发布后在合作伙伴中心可以查到），留空则隐藏商店入口。</summary>
         internal const string StoreProductId = "";
 
-        /// <summary>伴侣 MSIX（搜索服务）的下载页面，发布前改成你的 GitHub Releases / 官网地址。</summary>
-        internal const string ServiceDownloadUrl = "https://github.com/your-name/BlockBox/releases/latest";
+        /// <summary>伴侣 MSIX（搜索服务）的下载页面。</summary>
+        internal const string ServiceDownloadUrl = "https://github.com/DreamLull-dev/BlockBox.SearchService/releases/latest";
 
         internal static Uri? StorePageUri =>
             string.IsNullOrWhiteSpace(StoreProductId)
