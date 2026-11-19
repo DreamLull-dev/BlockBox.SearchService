@@ -105,8 +105,8 @@ namespace BlockBox.Views
 
             // 只用内容自身的透明度/缩放做入场：之前用 SetLayeredWindowAttributes 对整个 HWND
             // 做逐帧透明（配合亚克力背景）会让鼠标悬停/焦点状态反复重算，看起来一闪一闪。
+            // RootGrid 在 XAML 里就是 Opacity=0，所以第一帧不会闪出内容。
             WindowFadeController.FadeContentIn(RootGrid);
-            Activate();
         }
 
         private async void SendMail_Click(object sender, RoutedEventArgs e)
@@ -124,6 +124,7 @@ namespace BlockBox.Views
             Clipboard.SetContent(package);
         }
 
-        private void Close_Click(object sender, RoutedEventArgs e) => Close();
+        private void Close_Click(object sender, RoutedEventArgs e)
+            => _ = WindowFadeController.FadeContentOutAsync(this, RootGrid);
     }
 }

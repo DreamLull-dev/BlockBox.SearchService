@@ -120,6 +120,41 @@ namespace BlockBox.Helpers
             }
         }
 
+        /// <summary>
+        /// 内容渐出后关闭窗口。和 <see cref="FadeContentIn"/> 对称，不触碰 HWND 分层属性。
+        /// </summary>
+        public static Task FadeContentOutAsync(Window window, FrameworkElement root, TimeSpan? duration = null)
+        {
+            var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            try
+            {
+                var storyboard = new Storyboard();
+                var fade = new DoubleAnimation
+                {
+                    From = root.Opacity,
+                    To = 0,
+                    Duration = new Duration(duration ?? TimeSpan.FromMilliseconds(180)),
+                    EnableDependentAnimation = true
+                };
+                Storyboard.SetTarget(fade, root);
+                Storyboard.SetTargetProperty(fade, "Opacity");
+                storyboard.Children.Add(fade);
+                storyboard.Completed += (_, _) =>
+                {
+                    completion.TrySetResult();
+                    window.Close();
+                };
+                storyboard.Begin();
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[窗口内容渐出] 动画失败: {ex}");
+                completion.TrySetResult();
+                window.Close();
+            }
+            return completion.Task;
+        }
+
         public static void FadeAndScaleIn(Window window, FrameworkElement root, TimeSpan? duration = null)
         {
             var animationDuration = duration ?? TimeSpan.FromMilliseconds(360);

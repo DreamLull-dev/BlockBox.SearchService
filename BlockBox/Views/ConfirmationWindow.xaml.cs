@@ -72,19 +72,19 @@ namespace BlockBox.Views
         private void PrimaryButton_Click(object sender, RoutedEventArgs e)
         {
             Result = 1;
-            WindowFadeController.CloseWithAnimation(this);
+            _ = WindowFadeController.FadeContentOutAsync(this, RootGrid);
         }
 
         private void SecondaryButton_Click(object sender, RoutedEventArgs e)
         {
             Result = 2;
-            WindowFadeController.CloseWithAnimation(this);
+            _ = WindowFadeController.FadeContentOutAsync(this, RootGrid);
         }
 
         private void CancelButton_Click(object sender, RoutedEventArgs e)
         {
             Result = 0;
-            WindowFadeController.CloseWithAnimation(this);
+            _ = WindowFadeController.FadeContentOutAsync(this, RootGrid);
         }
     }
 }
