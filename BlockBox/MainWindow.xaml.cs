@@ -274,6 +274,9 @@ namespace BlockBox
         /// <summary>主界面当前选中的分类（看标签页或分区标题时为 null）。</summary>
         public Category? CurrentCategory => _currentCategory;
 
+        /// <summary>主界面当前的工作模式，搜索面板用它实时取分类/写归属模式。</summary>
+        public AppMode CurrentMode => _currentMode;
+
         /// <summary>选中分类变化时触发，搜索窗体据此刷新“添加到当前分类”按钮的可用状态。</summary>
         public event EventHandler? CurrentCategoryChanged;
 

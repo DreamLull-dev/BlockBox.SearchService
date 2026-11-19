@@ -124,6 +124,12 @@ namespace BlockBox.Views
 
         private void ShellClosed(object? sender, EventArgs e) => UpdateAddButtonState();
 
+        /// <summary>
+        /// 当前生效的工作模式：以主界面为准。搜索面板是常驻的独立窗口，用户切换模式后
+        /// 不能再用构造时的旧模式去列分类或写 BelongingMode。
+        /// </summary>
+        private AppMode EffectiveMode => (App.MainWindow as MainWindow)?.CurrentMode ?? _mode;
+
         /// <summary>主窗体还活着（含收在托盘里）才能执行“添加到分类”这类依赖主界面的操作。</summary>
         private bool CanModifyShell => App.MainWindow is MainWindow shell && !shell.IsShellClosed;
 
@@ -1037,7 +1043,7 @@ namespace BlockBox.Views
             if (selected.Count == 0 && clickedItem is not null) selected.Add(clickedItem);
             if (selected.Count == 0) return;
 
-            var categories = CategoryRepository.GetVisible(_mode)
+            var categories = CategoryRepository.GetVisible(EffectiveMode)
                 .Where(c => !c.IsSeparator && !c.IsSectionHeader)
                 .ToList();
             if (categories.Count == 0) return;
@@ -1073,11 +1079,17 @@ namespace BlockBox.Views
         {
             // 主窗体已真正关闭时不再写分类记录，避免操作一个已经销毁的界面。
             if (!CanModifyShell) return;
+
+            // 对话框打开期间主界面可能切换了工作模式：用当前模式写入，并确认分类仍属于该模式。
+            AppMode mode = EffectiveMode;
+            if (!CategoryRepository.GetVisible(mode).Any(c => string.Equals(c.Id, category.Id, StringComparison.Ordinal)))
+                return;
+
             int added = 0;
             foreach (var file in selected)
             {
                 if (!ContentKindHelper.Matches(file.Path, category.ContentKind, category.ExtensionList)) continue;
-                if (ShortcutRepository.ExistsInCategory(category.Id, _mode, file.Path)) continue;
+                if (ShortcutRepository.ExistsInCategory(category.Id, mode, file.Path)) continue;
                 ShortcutRepository.Add(new ShortcutItem
                 {
                     Name = Path.GetFileNameWithoutExtension(file.Path),
@@ -1085,7 +1097,7 @@ namespace BlockBox.Views
                     IsFile = !ContentKindHelper.IsApplication(file.Path),
                     CategoryId = category.Id,
                     IsShared = category.IsShared,
-                    BelongingMode = _mode,
+                    BelongingMode = mode,
                     SortOrder = ShortcutRepository.GetNextSortOrder(category.Id, category.IsShared)
                 });
                 added++;
