@@ -303,7 +303,6 @@
             Background="{ThemeResource DividerStrokeColorDefaultBrush}"
             Visibility="{x:Bind SeparatorLineVisibility}"/>
                                             <Button x:Name="SharedCategoriesHeader"
-                                                    Tag="SkipForeground"
                                                     Height="28"
                                                     HorizontalAlignment="Stretch"
                                                     Padding="0,0,0,0"

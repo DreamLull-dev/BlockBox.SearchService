@@ -10,6 +10,10 @@ namespace BlockBox.Helpers
         public const string MainContentBackground = "#FFF0F0F0";
         public const string PrimaryFontColor = "#FFFFFFFF";      // 统一用 8 位
         public const string ShortcutGridFontColor = "#FF000000";
+        // PrimaryFontColorAuto = 是否按背景自动校正字体色明度；
+        // ShortcutGridFontColorAuto = 内容区是否跟随全局字体色。
+        public const bool PrimaryFontColorAuto = true;
+        public const bool ShortcutGridFontColorAuto = true;
 
         // Sidebar
         public const string SidebarBackgroundColor = "#FFF7F8FB";

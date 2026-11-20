@@ -967,7 +967,17 @@ namespace BlockBox.Views
                 if (e.Item is SearchResultItem recycled) recycled.ReleaseIcon();
                 return;
             }
-            if (e.Item is not SearchResultItem item) return;
+            if (e.Item is not SearchResultItem item
+                || e.ItemContainer is not FrameworkElement container)
+            {
+                return;
+            }
+
+            // 结果项是在窗口加载之后才创建的，这里按当前字体色补一次，
+            // 否则首次启动时新增行会停留在主题默认黑色。
+            // 延后到模板子元素创建完成后，避免只刷到容器本身。
+            DispatcherQueue.TryEnqueue(() => WindowAcrylicHelper.ApplyCurrentTextColors(container));
+
             int index = e.ItemIndex;
             if (index >= _iconLoadLimit)
                 _iconLoadLimit = ((index / 200) + 1) * 200;

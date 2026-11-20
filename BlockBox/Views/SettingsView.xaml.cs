@@ -149,10 +149,14 @@ namespace BlockBox.Views
             => $"#{SidebarBackgroundColorPicker.Color.R:X2}{SidebarBackgroundColorPicker.Color.G:X2}{SidebarBackgroundColorPicker.Color.B:X2}";
 
         public string FontColorHex
-            => $"#{FontColorPicker.Color.R:X2}{FontColorPicker.Color.G:X2}{FontColorPicker.Color.B:X2}";
+            => _fontColorAuto
+                ? LanguageService.Translate("自动")
+                : $"#{FontColorPicker.Color.R:X2}{FontColorPicker.Color.G:X2}{FontColorPicker.Color.B:X2}";
 
         public string ShortcutGridFontColorHex
-            => $"#{ShortcutGridFontColorPicker.Color.R:X2}{ShortcutGridFontColorPicker.Color.G:X2}{ShortcutGridFontColorPicker.Color.B:X2}";
+            => _shortcutGridFontColorAuto
+                ? LanguageService.Translate("全局")
+                : $"#{ShortcutGridFontColorPicker.Color.R:X2}{ShortcutGridFontColorPicker.Color.G:X2}{ShortcutGridFontColorPicker.Color.B:X2}";
 
         public string OverlayColorHex
             => $"#{OverlayColorPicker.Color.R:X2}{OverlayColorPicker.Color.G:X2}{OverlayColorPicker.Color.B:X2}";
@@ -167,8 +171,14 @@ namespace BlockBox.Views
         private string _iniPath = string.Empty;
         private IniHelper? _ini;
         private bool _loading;
-        private Windows.UI.Color? _pendingTextColor;
+        private bool _hasPendingTextColor;
+        private bool _textColorApplyQueued;
+        private Windows.UI.Color _pendingTextColor = Windows.UI.Color.FromArgb(255, 255, 255, 255);
+        private bool _pendingTextAdjustForContrast = true;
+        private Windows.UI.Color _pendingTextBackground = Windows.UI.Color.FromArgb(255, 255, 255, 255);
         private Windows.UI.Color? _pendingButtonTextColor;
+        private bool _fontColorAuto = true;
+        private bool _shortcutGridFontColorAuto = true;
         private TextBox? _recordingHotkeyTextBox;
         private string _recordingHotkeyOriginalText = string.Empty;
         private bool _allowHotkeyFocusFromPointer;
@@ -426,23 +436,42 @@ namespace BlockBox.Views
             _ini = new IniHelper(iniPath);
         }
 
-        public void ApplyCalculatedTextColor(Windows.UI.Color color)
+        /// <summary>
+        /// 应用设置页文字颜色。
+        /// </summary>
+        /// <param name="textColor">用户选择的基础颜色。</param>
+        /// <param name="adjustForContrast">true：按控件实际背景提亮/压暗；false：严格使用原色。</param>
+        /// <param name="background">设置页外层背景，仅在控件自身找不到背景时兜底。</param>
+        public void ApplyCalculatedTextColor(
+            Windows.UI.Color textColor,
+            bool adjustForContrast,
+            Windows.UI.Color background)
         {
-            _pendingTextColor = color;
+            _pendingTextColor = textColor;
+            _pendingTextAdjustForContrast = adjustForContrast;
+            _pendingTextBackground = background;
+            _hasPendingTextColor = true;
             if (!IsLoaded)
                 return;
 
-            DispatcherQueue.TryEnqueue(ApplyPendingTextColor);
+            QueueApplyPendingTextColor();
         }
 
-        public void ApplyBackButtonTextColor(Windows.UI.Color color)
+        /// <summary>
+        /// 同一轮消息循环里可能有多处请求刷新文字颜色（打开设置页、语言切换等），
+        /// 合并成一次，避免同一棵视觉树被反复遍历。
+        /// </summary>
+        private void QueueApplyPendingTextColor()
         {
-            var brush = new SolidColorBrush(color);
-            BackButton.Foreground = brush;
+            if (_textColorApplyQueued)
+                return;
 
-            int childCount = VisualTreeHelper.GetChildrenCount(BackButton);
-            for (int i = 0; i < childCount; i++)
-                ApplyForegroundToVisualTree(VisualTreeHelper.GetChild(BackButton, i), brush);
+            _textColorApplyQueued = true;
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                _textColorApplyQueued = false;
+                ApplyPendingTextColor();
+            });
         }
 
         private void SettingsView_Loaded(object sender, RoutedEventArgs e)
@@ -471,25 +500,32 @@ namespace BlockBox.Views
                 WebsiteButton.NavigateUri = new Uri(SupportInfo.GitHubUrl);
             }
 
-            DispatcherQueue.TryEnqueue(ApplyPendingTextColor);
-            DispatcherQueue.TryEnqueue(ApplySettingsButtonTextColors);
+            // 文字颜色和按钮颜色都在 ApplyPendingTextColor 里处理，避免同一批控件被刷两遍。
+            QueueApplyPendingTextColor();
         }
 
         private void ApplyPendingTextColor()
         {
-            if (!_pendingTextColor.HasValue || !IsLoaded)
+            if (!IsLoaded || !_hasPendingTextColor)
                 return;
-            System.Diagnostics.Debug.WriteLine(
-        $"[SettingsView] ApplyPendingTextColor = " +
-        $"#{_pendingTextColor.Value.A:X2}{_pendingTextColor.Value.R:X2}" +
-        $"{_pendingTextColor.Value.G:X2}{_pendingTextColor.Value.B:X2}");
-            ApplyForegroundToVisualTree(this, new SolidColorBrush(_pendingTextColor.Value));
+
+            ApplyForegroundToVisualTree(
+                this,
+                _pendingTextColor,
+                _pendingTextAdjustForContrast,
+                _pendingTextBackground);
             ApplySettingsButtonTextColors();
+
+            // 颜色选择器 Flyout 是独立 Popup，打开着时也要跟随最新字体色。
+            if (FontColorFlyout.IsOpen)
+                QueueApplyColorFlyoutTextColors(FontColorFlyout);
+            if (ShortcutGridFontColorFlyout.IsOpen)
+                QueueApplyColorFlyoutTextColors(ShortcutGridFontColorFlyout);
         }
 
         private void SettingsCategoryList_Loaded(object sender, RoutedEventArgs e)
         {
-            DispatcherQueue.TryEnqueue(ApplyPendingTextColor);
+            QueueApplyPendingTextColor();
         }
 
         private void SettingsCategoryList_ContainerContentChanging(
@@ -501,42 +537,29 @@ namespace BlockBox.Views
 
             FontSizeHelper.ApplyGlobalFontSizeToTree(args.ItemContainer);
 
-            if (!_pendingTextColor.HasValue)
-                return;
-
-            var brush = new SolidColorBrush(_pendingTextColor.Value);
-            args.ItemContainer.Foreground = brush;
+            // 模板子元素要等这一轮布局结束才创建，延后一次统一赋值，
+            // 避免先给容器刷一遍、再给子元素刷一遍。
             DispatcherQueue.TryEnqueue(() =>
             {
-                if (!_pendingTextColor.HasValue)
+                if (!IsLoaded || !_hasPendingTextColor || args.ItemContainer == null)
                     return;
 
                 ApplyForegroundToVisualTree(
                     args.ItemContainer,
-                    new SolidColorBrush(_pendingTextColor.Value));
+                    _pendingTextColor,
+                    _pendingTextAdjustForContrast,
+                    _pendingTextBackground);
             });
         }
         public SolidColorBrush BackButtonForeground { get; private set; }
     = new SolidColorBrush(Windows.UI.Color.FromArgb(255, 255, 255, 255));
 
-        private void ApplyForegroundToVisualTree(DependencyObject root, Brush brush)
-        {
-            if (root is FrameworkElement fe && (fe.Tag as string) == "SkipForeground") return;
-
-            if (root is Control control)
-                control.Foreground = brush;
-            else if (root is TextBlock textBlock)
-                textBlock.Foreground = brush;
-            else if (root is FontIcon fontIcon)
-                fontIcon.Foreground = brush;
-
-            if (root is TextBox textBox)
-                textBox.PlaceholderForeground = brush;
-
-            int childCount = VisualTreeHelper.GetChildrenCount(root);
-            for (int i = 0; i < childCount; i++)
-                ApplyForegroundToVisualTree(VisualTreeHelper.GetChild(root, i), brush);
-        }
+        private void ApplyForegroundToVisualTree(
+            DependencyObject root,
+            Windows.UI.Color textColor,
+            bool adjustForContrast,
+            Windows.UI.Color background)
+            => TextColorHelper.ApplyForegroundToTree(root, textColor, adjustForContrast, background);
 
         private void SettingsView_Unloaded(object sender, RoutedEventArgs e)
         {
@@ -567,6 +590,15 @@ namespace BlockBox.Views
             FontColorBrush = new SolidColorBrush(FontColorPicker.Color);
             ShortcutGridFontColorBrush = new SolidColorBrush(ShortcutGridFontColorPicker.Color);
             OverlayColorBrush = new SolidColorBrush(OverlayColorPicker.Color);
+
+            // 旧配置没有 Auto 键：默认白色字体 = 自动，默认黑色内容区字体 = 自动。
+            // 新配置一律以 Auto 键为准，这样用户显式选白色/黑色也能真正生效。
+            _fontColorAuto = ReadFontColorAuto(
+                "PrimaryFontColorAuto", FontColorPicker.Color, whiteMeansAuto: true);
+            _shortcutGridFontColorAuto = ReadFontColorAuto(
+                "ShortcutGridFontColorAuto", ShortcutGridFontColorPicker.Color, whiteMeansAuto: false);
+            FontColorAutoToggle.IsChecked = _fontColorAuto;
+            ShortcutGridFontColorAutoToggle.IsChecked = _shortcutGridFontColorAuto;
 
             Bindings?.Update();
 
@@ -664,10 +696,33 @@ namespace BlockBox.Views
             NotificationsSection.Visibility = category == "Notifications" ? Visibility.Visible : Visibility.Collapsed;
             AboutSection.Visibility = category == "About" ? Visibility.Visible : Visibility.Collapsed;
 
+            FrameworkElement? activeSection = category switch
+            {
+                "Appearance" => AppearanceSection,
+                "General" => GeneralSection,
+                "Hotkeys" => HotkeysSection,
+                "Data" => DataSection,
+                "Notifications" => NotificationsSection,
+                "About" => AboutSection,
+                _ => null
+            };
+
             DispatcherQueue.TryEnqueue(() =>
             {
-                if (IsLoaded)
-                    FontSizeHelper.ApplyGlobalFontSizeToTree(this);
+                if (!IsLoaded)
+                    return;
+
+                FontSizeHelper.ApplyGlobalFontSizeToTree(this);
+                // 刚显示的页之前可能是 Collapsed，模板子元素到这时才真正创建；
+                // 只补刷当前页，避免把已经刷过的整棵树再刷一遍。
+                if (activeSection != null && _hasPendingTextColor && !_textColorApplyQueued)
+                {
+                    ApplyForegroundToVisualTree(
+                        activeSection,
+                        _pendingTextColor,
+                        _pendingTextAdjustForContrast,
+                        _pendingTextBackground);
+                }
             });
             ScrollBarRefreshRequested?.Invoke(this, EventArgs.Empty);
         }
@@ -682,6 +737,23 @@ namespace BlockBox.Views
                 ? value
                 : fallback;
         private bool ReadBool(string section, string key, bool fallback) => _ini?.ReadBool(section, key, fallback) ?? fallback;
+
+        /// <summary>
+        /// 读取“自动/自定义”开关。旧配置没有这个键时按默认哨兵色推断一次并落盘，
+        /// 之后用户显式选择的白色/黑色就不会再被当成自动。
+        /// </summary>
+        private bool ReadFontColorAuto(string key, Windows.UI.Color color, bool whiteMeansAuto)
+        {
+            string raw = Read("Global", key, string.Empty);
+            if (bool.TryParse(raw, out bool saved))
+                return saved;
+
+            bool auto = whiteMeansAuto
+                ? TextColorHelper.IsOpaqueWhite(color)
+                : TextColorHelper.IsOpaqueBlack(color);
+            _ini?.WriteValue("Global", key, auto.ToString().ToLowerInvariant());
+            return auto;
+        }
 
         private void SaveColor(string section, string key, Windows.UI.Color color)
             => _ini?.WriteValue(section, key, $"#{color.A:X2}{color.R:X2}{color.G:X2}{color.B:X2}");
@@ -1106,35 +1178,111 @@ namespace BlockBox.Views
         private void ColorPicker_ColorChanged(ColorPicker sender, ColorChangedEventArgs args)
         {
             if (_loading) return;
+
             if (sender == PrimaryColorPicker)
             {
                 SaveColor("Global", "PrimaryBackground", args.NewColor);
                 var primaryBrush = new SolidColorBrush(args.NewColor);
                 Application.Current.Resources["AppPrimaryBackgroundBrush"] = primaryBrush;
                 BlockBox.Helpers.WindowAcrylicHelper.UpdateAll(args.NewColor);
-            }
-            else if (sender == MainContentColorPicker) SaveColor("Global", "MainContentBackground", args.NewColor);
-            else if (sender == SidebarBackgroundColorPicker) SaveColor("Sidebar", "BackgroundColor", args.NewColor);
-            else if (sender == OverlayColorPicker) SaveColor("System", "OverlayColor", args.NewColor);
-            else if (sender == ShortcutGridFontColorPicker) SaveColor("Global", "ShortcutGridFontColor", args.NewColor);
-            else SaveColor("Global", "PrimaryFontColor", args.NewColor);
-            if (sender == PrimaryColorPicker)
-            {
                 PrimaryButtonBackground = new SolidColorBrush(args.NewColor);
                 PrimaryColorBrush = new SolidColorBrush(args.NewColor);
             }
             else if (sender == MainContentColorPicker)
+            {
+                SaveColor("Global", "MainContentBackground", args.NewColor);
                 MainContentColorBrush = new SolidColorBrush(args.NewColor);
+            }
             else if (sender == SidebarBackgroundColorPicker)
+            {
+                SaveColor("Sidebar", "BackgroundColor", args.NewColor);
                 SidebarBackgroundColorBrush = new SolidColorBrush(args.NewColor);
+            }
             else if (sender == FontColorPicker)
+            {
+                // 选色只更新基础颜色，是否自动校正由“自动（深色 / 浅色）”开关决定。
+                SaveColor("Global", "PrimaryFontColor", args.NewColor);
                 FontColorBrush = new SolidColorBrush(args.NewColor);
+            }
             else if (sender == ShortcutGridFontColorPicker)
+            {
+                // 内容区字体色是全局字体色的“覆盖项”：手动选色时必须关闭跟随全局，
+                // 否则内容区仍会使用全局颜色，用户选中的颜色不会生效。
+                SetShortcutGridFontColorAuto(false);
+                SaveColor("Global", "ShortcutGridFontColor", args.NewColor);
                 ShortcutGridFontColorBrush = new SolidColorBrush(args.NewColor);
+            }
             else if (sender == OverlayColorPicker)
+            {
+                SaveColor("System", "OverlayColor", args.NewColor);
                 OverlayColorBrush = new SolidColorBrush(args.NewColor);
+            }
+
             Bindings?.Update();
             SettingsChanged?.Invoke(this, EventArgs.Empty);
+        }
+
+        private void FontColorAutoToggle_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_loading || _ini == null) return;
+
+            _fontColorAuto = FontColorAutoToggle.IsChecked == true;
+            _ini.WriteValue("Global", "PrimaryFontColorAuto", _fontColorAuto.ToString().ToLowerInvariant());
+            Bindings?.Update();
+            SettingsChanged?.Invoke(this, EventArgs.Empty);
+        }
+
+        private void FontColorFlyout_Opened(object? sender, object e)
+            => QueueApplyColorFlyoutTextColors(sender as Flyout);
+
+        private void ShortcutGridFontColorFlyout_Opened(object? sender, object e)
+            => QueueApplyColorFlyoutTextColors(sender as Flyout);
+
+        /// <summary>
+        /// 颜色选择器在 Flyout（独立 Popup 视觉树）里，主设置页的遍历到不了；
+        /// 打开后单独补一次，保证自定义颜色也能覆盖到选择器内的控件。
+        /// </summary>
+        private void QueueApplyColorFlyoutTextColors(Flyout? flyout)
+        {
+            if (flyout?.Content is not DependencyObject content)
+                return;
+
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                if (!flyout.IsOpen || !_hasPendingTextColor)
+                    return;
+
+                ApplyForegroundToVisualTree(
+                    content,
+                    _pendingTextColor,
+                    _pendingTextAdjustForContrast,
+                    _pendingTextBackground);
+            });
+        }
+
+        private void ShortcutGridFontColorAutoToggle_Changed(object sender, RoutedEventArgs e)
+        {
+            if (_loading || _ini == null) return;
+
+            _shortcutGridFontColorAuto = ShortcutGridFontColorAutoToggle.IsChecked == true;
+            _ini.WriteValue("Global", "ShortcutGridFontColorAuto", _shortcutGridFontColorAuto.ToString().ToLowerInvariant());
+            Bindings?.Update();
+            SettingsChanged?.Invoke(this, EventArgs.Empty);
+        }
+
+        /// <summary>
+        /// 内容区字体色被手动修改时，关闭“跟随全局”，让这次选色真正生效。
+        /// </summary>
+        private void SetShortcutGridFontColorAuto(bool auto)
+        {
+            if (_shortcutGridFontColorAuto == auto)
+                return;
+
+            _shortcutGridFontColorAuto = auto;
+            _loading = true;
+            ShortcutGridFontColorAutoToggle.IsChecked = auto;
+            _loading = false;
+            _ini?.WriteValue("Global", "ShortcutGridFontColorAuto", auto.ToString().ToLowerInvariant());
         }
 
         private void ColorSwatch_Tapped(object sender, TappedRoutedEventArgs e)
@@ -1417,16 +1565,7 @@ namespace BlockBox.Views
         private void BackButton_Click(object sender, RoutedEventArgs e) => BackRequested?.Invoke(this, EventArgs.Empty);
 
         private static Windows.UI.Color ParseColor(string value)
-        {
-            string hex = value.TrimStart('#');
-            if (hex.Length == 6) hex = "FF" + hex;
-            if (hex.Length != 8) return Windows.UI.Color.FromArgb(255, 255, 255, 255);
-            return Windows.UI.Color.FromArgb(
-                byte.Parse(hex.Substring(0, 2), NumberStyles.HexNumber),
-                byte.Parse(hex.Substring(2, 2), NumberStyles.HexNumber),
-                byte.Parse(hex.Substring(4, 2), NumberStyles.HexNumber),
-                byte.Parse(hex.Substring(6, 2), NumberStyles.HexNumber));
-        }
+            => TextColorHelper.ParseColor(value, Windows.UI.Color.FromArgb(255, 255, 255, 255));
 
         /// <summary>切到指定 Tag 的设置页（例如从“关于 Block Box”直接打开“关于我们”）。</summary>
         public void SelectPage(string tag)
@@ -1463,35 +1602,19 @@ namespace BlockBox.Views
             if (_ini == null) return;
             LoadSettings();
         }
-        public string DebugBackButtonForeground()
-        {
-            var fg = BackButton.Foreground;
-            if (fg is SolidColorBrush s)
-                return $"#{s.Color.A:X2}{s.Color.R:X2}{s.Color.G:X2}{s.Color.B:X2}";
-            return fg?.GetType().Name ?? "null";
-        }
 
         public void ApplySettingsButtonsTextColor(Windows.UI.Color color)
         {
-            System.Diagnostics.Debug.WriteLine(
-                $"[BtnColor] ApplySettingsButtonsTextColor = #{color.A:X2}{color.R:X2}{color.G:X2}{color.B:X2}");
-
-            var brush = new SolidColorBrush(color);
             _pendingButtonTextColor = color;
 
-            // ⭐ 只改 BackButton：更新绑定源 + 刷新 x:Bind
-            //    不写 BackButton.Foreground = brush，那会破坏 x:Bind 绑定
-            BackButtonForeground = brush;
-
-            // 其他 6 个按钮保持原逻辑（你想只改 BackButton 的话，把下面这些删掉就行）
-            ExportSettingsButton.Foreground = brush;
-            ImportSettingsButton.Foreground = brush;
-            BackupDatabaseButton.Foreground = brush;
-            RestoreDatabaseButton.Foreground = brush;
-            ClearIconCacheButton.Foreground = brush;
-            ResetSettingsButton.Foreground = brush;
+            // BackButton 的颜色由 x:Bind 绑定到 BackButtonForeground：
+            // 只更新绑定源并刷新一次，不再直接写 BackButton.Foreground，避免破坏绑定。
+            BackButtonForeground = new SolidColorBrush(color);
             Bindings?.Update();
-            if (IsLoaded)
+
+            // 如果文字颜色的整树刷新已经排队，按钮颜色会由那次刷新统一处理，
+            // 这里就不再单独遍历一遍按钮子树。
+            if (IsLoaded && !_textColorApplyQueued)
                 ApplySettingsButtonTextColors();
         }
 
@@ -1500,7 +1623,8 @@ namespace BlockBox.Views
             if (!_pendingButtonTextColor.HasValue)
                 return;
 
-            var brush = new SolidColorBrush(_pendingButtonTextColor.Value);
+            Windows.UI.Color color = _pendingButtonTextColor.Value;
+            var brush = new SolidColorBrush(color);
             Button[] buttons =
             {
                 BackButton,
@@ -1518,16 +1642,20 @@ namespace BlockBox.Views
 
             foreach (var button in buttons)
             {
-                button.Foreground = brush;
+                // BackButton 自身交给绑定，其他按钮在这里赋值；子元素统一走一次遍历。
+                if (!ReferenceEquals(button, BackButton))
+                    button.Foreground = brush;
+
                 int childCount = VisualTreeHelper.GetChildrenCount(button);
                 for (int i = 0; i < childCount; i++)
-                    ApplyForegroundToVisualTree(VisualTreeHelper.GetChild(button, i), brush);
+                {
+                    TextColorHelper.ApplyForegroundToTree(
+                        VisualTreeHelper.GetChild(button, i),
+                        color,
+                        false,
+                        color);
+                }
             }
-
-            WebsiteButton.Foreground = brush;
-            int websiteChildCount = VisualTreeHelper.GetChildrenCount(WebsiteButton);
-            for (int i = 0; i < websiteChildCount; i++)
-                ApplyForegroundToVisualTree(VisualTreeHelper.GetChild(WebsiteButton, i), brush);
         }
         private async void ExportSettingsButton_Click(object sender, RoutedEventArgs e)
         {

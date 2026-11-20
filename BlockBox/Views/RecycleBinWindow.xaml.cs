@@ -247,6 +247,11 @@ namespace BlockBox.Views
                 return;
             }
 
+            WindowAcrylicHelper.ApplyCurrentTextColors(element);
+
+            // 模板子元素可能在容器事件之后才创建，延后一次补刷当前字体色。
+            DispatcherQueue.TryEnqueue(() => WindowAcrylicHelper.ApplyCurrentTextColors(element));
+
             var icon = FindChildByTag<FontIcon>(element, "RecycleBinIcon");
             var image = FindChildByTag<Image>(element, "RecycleBinThumbnail");
             if (icon == null || image == null)

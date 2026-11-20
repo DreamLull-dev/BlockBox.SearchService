@@ -62,7 +62,13 @@ namespace BlockBox.Views
 
         private void EntriesList_ContainerContentChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
         {
+            if (args.InRecycleQueue)
+                return;
             if (args.ItemContainer is not FrameworkElement container || args.Item is not ShortcutItem item) return;
+
+            // 模板子元素可能在容器事件之后才创建，延后一次补刷当前字体色。
+            DispatcherQueue.TryEnqueue(() => WindowAcrylicHelper.ApplyCurrentTextColors(container));
+
             var icon = FindChild<FontIcon>(container, "EntryIcon");
             var image = FindChild<Image>(container, "EntryThumbnail");
             if (icon == null || image == null) return;

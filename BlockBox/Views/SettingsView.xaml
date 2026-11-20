@@ -349,14 +349,29 @@
                                             BorderThickness="0.6"
                                             BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}">
                                         <Button.Flyout>
-                                            <Flyout x:Name="FontColorFlyout">
+                                            <Flyout x:Name="FontColorFlyout" Opened="FontColorFlyout_Opened">
                                                 <StackPanel>
+                                                    <CheckBox x:Name="FontColorAutoToggle"
+                                                              Content="{x:Bind helpers:LanguageService.Translate('自动（深色 / 浅色）'), Mode=OneWay}"
+                                                              IsChecked="True"
+                                                              Checked="FontColorAutoToggle_Changed"
+                                                              Unchecked="FontColorAutoToggle_Changed"
+                                                              MaxWidth="277"
+                                                              HorizontalAlignment="Left"
+                                                              Margin="0,0,0,6"/>
+                                                    <TextBlock Text="{x:Bind helpers:LanguageService.Translate('开启后按背景自动提亮或压暗文字；关闭后严格使用所选颜色。'), Mode=OneWay}"
+                                                               Opacity="0.65"
+                                                               TextWrapping="Wrap"
+                                                               MaxWidth="277"
+                                                               Margin="0,0,0,8"/>
                                                     <Viewbox Width="277.33" HorizontalAlignment="Left" Stretch="Uniform" StretchDirection="DownOnly">
                                                         <ColorPicker x:Name="FontColorPicker"
                                                                      Width="346.67"
                                                                      ColorChanged="ColorPicker_ColorChanged"
                                                                      IsMoreButtonVisible="False"
-                                                                     IsColorPreviewVisible="True" />
+                                                                     IsColorPreviewVisible="True"
+                                                                     IsAlphaSliderVisible="False"
+                                                                     IsAlphaTextInputVisible="False" />
                                                     </Viewbox>
                                                     <Button Content="{x:Bind helpers:LanguageService.Translate('完成'), Mode=OneWay}"
                                                             Tag="FontColorFlyout"
@@ -400,14 +415,29 @@
                                             BorderThickness="0.6"
                                             BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}">
                                         <Button.Flyout>
-                                            <Flyout x:Name="ShortcutGridFontColorFlyout">
+                                            <Flyout x:Name="ShortcutGridFontColorFlyout" Opened="ShortcutGridFontColorFlyout_Opened">
                                                 <StackPanel>
+                                                    <CheckBox x:Name="ShortcutGridFontColorAutoToggle"
+                                                              Content="{x:Bind helpers:LanguageService.Translate('跟随全局字体色'), Mode=OneWay}"
+                                                              IsChecked="True"
+                                                              Checked="ShortcutGridFontColorAutoToggle_Changed"
+                                                              Unchecked="ShortcutGridFontColorAutoToggle_Changed"
+                                                              MaxWidth="277"
+                                                              HorizontalAlignment="Left"
+                                                              Margin="0,0,0,6"/>
+                                                    <TextBlock Text="{x:Bind helpers:LanguageService.Translate('开启后内容区使用全局字体色；关闭后使用这里的颜色。是否自动校正由全局“自动”开关决定。'), Mode=OneWay}"
+                                                               Opacity="0.65"
+                                                               TextWrapping="Wrap"
+                                                               MaxWidth="277"
+                                                               Margin="0,0,0,8"/>
                                                     <Viewbox Width="277.33" HorizontalAlignment="Left" Stretch="Uniform" StretchDirection="DownOnly">
                                                         <ColorPicker x:Name="ShortcutGridFontColorPicker"
                                                                      Width="346.67"
                                                                      ColorChanged="ColorPicker_ColorChanged"
                                                                      IsMoreButtonVisible="False"
-                                                                     IsColorPreviewVisible="True" />
+                                                                     IsColorPreviewVisible="True"
+                                                                     IsAlphaSliderVisible="False"
+                                                                     IsAlphaTextInputVisible="False" />
                                                     </Viewbox>
                                                     <Button Content="{x:Bind helpers:LanguageService.Translate('完成'), Mode=OneWay}"
                                                             Tag="ShortcutGridFontColorFlyout"
@@ -1301,7 +1331,7 @@
                                         Background="{x:Bind PrimaryButtonBackground, Mode=OneWay}"
                                         CornerRadius="17" HorizontalAlignment="Left"
                                         Click="CheckUpdatesButton_Click" />
-                                <HyperlinkButton x:Name="WebsiteButton" Tag="SkipForeground" Content="{x:Bind helpers:LanguageService.Translate('官网 / GitHub'), Mode=OneWay}" NavigateUri="https://github.com/" />
+                                <HyperlinkButton x:Name="WebsiteButton" Content="{x:Bind helpers:LanguageService.Translate('官网 / GitHub'), Mode=OneWay}" NavigateUri="https://github.com/" />
                                 <Button x:Name="FeedbackButton"
                                         Tag="SkipForeground"
                                         Content="{x:Bind helpers:LanguageService.Translate('反馈入口'), Mode=OneWay}"

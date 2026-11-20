@@ -532,7 +532,9 @@ namespace BlockBox
                 ini.WriteValue("Global", "PrimaryBackground", "#FF244A80");
                 ini.WriteValue("Global", "SecondaryBackground", "#FFF0F0F0");
                 ini.WriteValue("Global", "PrimaryFontColor", "#FFFFFF");
+                ini.WriteValue("Global", "PrimaryFontColorAuto", "true");
                 ini.WriteValue("Global", "ShortcutGridFontColor", "#FF000000");
+                ini.WriteValue("Global", "ShortcutGridFontColorAuto", "true");
                 ini.WriteValue("Global", "SecondaryFontColor", "#A0FFFFFF");
 
                 // ================= 计算后的文字颜色 =================

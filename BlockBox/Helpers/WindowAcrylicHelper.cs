@@ -1,7 +1,6 @@
 using Microsoft.UI.Composition;
 using Microsoft.UI.Composition.SystemBackdrops;
 using Microsoft.UI.Xaml;
-using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using System;
 using System.Collections.Generic;
@@ -13,11 +12,16 @@ namespace BlockBox.Helpers
 {
     internal static class WindowAcrylicHelper
     {
+        // 用户选择的字体色；adjustTextContrast=true 时按窗口内实际背景提亮/压暗。
+        private static Color _textColor = Color.FromArgb(255, 255, 255, 255);
+        private static bool _adjustTextContrast = true;
+
         private sealed class BackdropLifetime
         {
             private readonly Window _window;
             private DesktopAcrylicController? _controller;
             private readonly SystemBackdropConfiguration _configuration;
+            private Color _tint = Color.FromArgb(255, 36, 74, 128);
             private bool _isClosed;
 
             public BackdropLifetime(Window window)
@@ -28,26 +32,14 @@ namespace BlockBox.Helpers
                 window.Closed += OnClosed;
                 if (window.Content is FrameworkElement content)
                     content.Loaded += OnContentLoaded;
-                Application.Current.Resources.TryGetValue("AppPrimaryBackgroundBrush", out object value);
-                if (value is SolidColorBrush brush)
-                    Update(brush.Color);
             }
 
             public void Update(Color tint)
             {
                 if (_isClosed) return;
-                var foregroundBrush = new SolidColorBrush(GetContrastingForeground(tint));
-                try
-                {
-                    if (_window.Content is DependencyObject root)
-                        ApplyForeground(root, foregroundBrush);
-                }
-                catch (System.Runtime.InteropServices.COMException)
-                {
-                    // A window may close between the closed-state check and visual-tree access.
-                    Close();
-                    return;
-                }
+                _tint = tint;
+
+                ApplyTextColors(tint);
 
                 if (_controller is not null)
                 {
@@ -74,35 +66,43 @@ namespace BlockBox.Helpers
                 _controller = controller;
             }
 
-            private void OnContentLoaded(object sender, RoutedEventArgs args)
-            {
-                if (_isClosed || !Application.Current.Resources.TryGetValue("AppPrimaryBackgroundBrush", out object value)
-                    || value is not SolidColorBrush brush) return;
-                UpdateForegroundOnly(brush.Color);
-            }
-
-            public void UpdateForegroundOnly(Color tint)
+            /// <summary>
+            /// 只刷新文字颜色，不重设亚克力色调（主色未变、只改字体色时使用）。
+            /// </summary>
+            public void UpdateTextOnly()
             {
                 if (_isClosed) return;
+                ApplyTextColors(_tint);
+            }
+
+            private void ApplyTextColors(Color tint)
+            {
                 try
                 {
                     if (_window.Content is DependencyObject root)
-                        ApplyForeground(root, new SolidColorBrush(GetContrastingForeground(tint)));
+                    {
+                        // 自动模式：每个控件按自己的实际背景校正明度；
+                        // 关闭自动：严格使用用户颜色。
+                        TextColorHelper.ApplyForegroundToTree(
+                            root,
+                            _textColor,
+                            _adjustTextContrast,
+                            tint);
+                    }
                 }
-                catch (System.Runtime.InteropServices.COMException) { Close(); }
+                catch (System.Runtime.InteropServices.COMException)
+                {
+                    // A window may close between the closed-state check and visual-tree access.
+                    Close();
+                }
             }
 
-            private static void ApplyForeground(DependencyObject element, SolidColorBrush foregroundBrush)
+            private void OnContentLoaded(object sender, RoutedEventArgs args)
             {
-                // Only recolor text display elements; preserve button and input control styling.
-                if (element is TextBlock textBlock)
-                    textBlock.Foreground = foregroundBrush;
-                else if (element is RichTextBlock richTextBlock)
-                    richTextBlock.Foreground = foregroundBrush;
-
-                int childCount = VisualTreeHelper.GetChildrenCount(element);
-                for (int i = 0; i < childCount; i++)
-                    ApplyForeground(VisualTreeHelper.GetChild(element, i), foregroundBrush);
+                if (_isClosed) return;
+                // 动态内容（标题、按钮文案）是在 Apply 之后才赋值/创建的，
+                // 内容真正加载后再补刷一次。
+                UpdateTextOnly();
             }
 
             private void OnActivated(object sender, WindowActivatedEventArgs args)
@@ -145,6 +145,10 @@ namespace BlockBox.Helpers
             lifetime.Update(tint);
         }
 
+        /// <summary>
+        /// 更新所有已登记窗口的亚克力色调和文字颜色。
+        /// 调用方应先把字体色通过 <see cref="SetTextColor"/> 写入，避免二次遍历。
+        /// </summary>
         public static void UpdateAll(Color tint)
         {
             lock (SyncRoot)
@@ -157,21 +161,53 @@ namespace BlockBox.Helpers
             }
         }
 
-        private static Color GetContrastingForeground(Color color)
+        /// <summary>
+        /// 记录当前字体色与自动对比度开关。
+        /// applyToWindows=false 时只记录，由调用方随后统一刷新。
+        /// </summary>
+        public static void SetTextColor(Color color, bool adjustForContrast, bool applyToWindows = true)
         {
-            // WCAG relative luminance keeps the black/white switch consistent across hues.
-            static double Linearize(byte channel)
+            bool changed = _textColor != color || _adjustTextContrast != adjustForContrast;
+            _textColor = color;
+            _adjustTextContrast = adjustForContrast;
+
+            if (applyToWindows && changed)
+                UpdateAllTextColors();
+        }
+
+        /// <summary>
+        /// 给运行中新建的项容器套用当前字体色。列表/搜索结果的 DataTemplate 是
+        /// 窗口加载后才创建的，窗口加载时的那次遍历覆盖不到。
+        /// </summary>
+        public static void ApplyCurrentTextColors(DependencyObject root)
+        {
+            Color fallback = Color.FromArgb(255, 36, 74, 128);
+            if (Application.Current.Resources.TryGetValue("AppPrimaryBackgroundBrush", out object value)
+                && value is SolidColorBrush brush)
             {
-                double value = channel / 255d;
-                return value <= 0.04045 ? value / 12.92 : Math.Pow((value + 0.055) / 1.055, 2.4);
+                fallback = brush.Color;
             }
 
-            double luminance = 0.2126 * Linearize(color.R)
-                             + 0.7152 * Linearize(color.G)
-                             + 0.0722 * Linearize(color.B);
-            return luminance < 0.179
-                ? Color.FromArgb(255, 255, 255, 255)
-                : Color.FromArgb(255, 0, 0, 0);
+            TextColorHelper.ApplyForegroundToTree(
+                root,
+                _textColor,
+                _adjustTextContrast,
+                fallback);
+        }
+
+        /// <summary>
+        /// 字体色变化时只刷新文字，不动窗口背景。
+        /// </summary>
+        public static void UpdateAllTextColors()
+        {
+            lock (SyncRoot)
+            {
+                for (int i = ActiveLifetimes.Count - 1; i >= 0; i--)
+                {
+                    if (ActiveLifetimes[i].TryGetTarget(out var lifetime)) lifetime.UpdateTextOnly();
+                    else ActiveLifetimes.RemoveAt(i);
+                }
+            }
         }
     }
 }

@@ -43,16 +43,6 @@ namespace BlockBox
         private IniHelper _ini;
         private string _iniPath;
 
-        // 字体大小相关的常量
-        private const string ComputedTextColorsSection = "ComputedTextColors";
-        private const string ComputedSidebarTextColorKey = "Sidebar";
-        private const string ComputedMainTextColorKey = "Main";
-        private const string ComputedTabBarTextColorKey = "TabBar";
-        private const string ComputedSettingsTextColorKey = "Settings";
-        private const string ComputedSidebarAddButtonTextColorKey = "SidebarAddButtonNormal";
-        private const string ComputedSettingsBackButtonTextColorKey = "BackButtonNormal";
-        private const string ComputedSecondaryTextColorKey = "Secondary";
-
         private DispatcherQueueTimer? _dragRegionUpdateTimer;
 
         private ProgramFilter _programFilter = null!;
@@ -66,6 +56,10 @@ namespace BlockBox
         // 左侧菜单是否展开
         private bool _isSidebarExpanded = true;
         private Brush? _sidebarTextBrush;
+        // 新建快捷方式卡片时使用的文字颜色与是否自动校正对比度
+        private Color _shortcutTextColor = Color.FromArgb(255, 0, 0, 0);
+        private bool _shortcutTextAdjust = true;
+        private Color _shortcutTextFallback = Color.FromArgb(255, 255, 255, 255);
         //是否显示文件扩展名
         private bool _showFileExtension = true;
 
@@ -79,7 +73,6 @@ namespace BlockBox
 
         private CancellationTokenSource? _verifyCts;
         private bool _verifyClosedHandlerRegistered;
-        private CancellationTokenSource? _computedTextColorSaveCts;
 
         private enum ViewKind { Category, Tab }
         private ViewKind _currentView = ViewKind.Category;
@@ -600,11 +593,6 @@ namespace BlockBox
                     // --------------------------------------------------------
                     CancelBackgroundVerify();
 
-                    _computedTextColorSaveCts?.Cancel();
-                    _computedTextColorSaveCts?.Dispose();
-                    _computedTextColorSaveCts = null;
-
-
                     // --------------------------------------------------------
                     // 停止所有 DispatcherQueueTimer
                     // --------------------------------------------------------
@@ -684,6 +672,7 @@ namespace BlockBox
 
             // ============================================================
             // 标题栏按钮颜色
+            // 前景色在 ApplySettings 里跟随字体色刷新，这里只固定背景。
             // ============================================================
             titleBar.ButtonBackgroundColor =
                 Windows.UI.Color.FromArgb(
@@ -692,30 +681,6 @@ namespace BlockBox
             titleBar.ButtonInactiveBackgroundColor =
                 Windows.UI.Color.FromArgb(
                     0, 0, 0, 0);
-
-            titleBar.ButtonHoverBackgroundColor =
-                Windows.UI.Color.FromArgb(
-                    32, 255, 255, 255);
-
-            titleBar.ButtonPressedBackgroundColor =
-                Windows.UI.Color.FromArgb(
-                    48, 255, 255, 255);
-
-            titleBar.ButtonForegroundColor =
-                Windows.UI.Color.FromArgb(
-                    255, 255, 255, 255);
-
-            titleBar.ButtonInactiveForegroundColor =
-                Windows.UI.Color.FromArgb(
-                    128, 255, 255, 255);
-
-            titleBar.ButtonHoverForegroundColor =
-                Windows.UI.Color.FromArgb(
-                    255, 255, 255, 255);
-
-            titleBar.ButtonPressedForegroundColor =
-                Windows.UI.Color.FromArgb(
-                    255, 255, 255, 255);
 
 
             // ============================================================
@@ -3438,67 +3403,14 @@ namespace BlockBox
             }
         }
 
-        private void RefreshPartitionHeaderForegrounds()
-        {
-            if (_sidebarTextBrush == null)
-                return;
-
-            for (int i = 0; i < NavMenuList.Items.Count; i++)
-            {
-                if (NavMenuList.Items[i] is not Category { IsSectionHeader: true })
-                    continue;
-                if (NavMenuList.ContainerFromIndex(i) is not ListViewItem container)
-                    continue;
-
-                var headerText = FindChildByName<TextBlock>(container, "SectionHeaderLabel");
-                if (headerText != null)
-                    headerText.Foreground = _sidebarTextBrush;
-
-                var headerArrow = FindChildByName<FontIcon>(container, "SectionHeaderArrow");
-                if (headerArrow != null)
-                    headerArrow.Foreground = _sidebarTextBrush;
-            }
-        }
-
         private void ApplySettingsDebounce_Tick(DispatcherQueueTimer sender, object args)
         {
             sender.Stop();
             if (_closeAnimationStarted || _allowWindowClose)
                 return;
 
-            ApplySettings(reloadNavigation: false, recalculateTextColors: true);
+            ApplySettings(reloadNavigation: false);
             ScheduleUpdateTabPaths();
-            ScheduleComputedTextColorPersistence();
-        }
-        private void PersistComputedTextColors()
-        {
-            ApplySettings(
-                reloadNavigation: false,
-                recalculateTextColors: true,
-                persistComputedTextColors: true);
-        }
-
-        private void ScheduleComputedTextColorPersistence()
-        {
-            _computedTextColorSaveCts?.Cancel();
-            var saveCts = new CancellationTokenSource();
-            _computedTextColorSaveCts = saveCts;
-            _ = PersistComputedTextColorsAsync(saveCts.Token);
-        }
-
-        private async Task PersistComputedTextColorsAsync(CancellationToken cancellationToken)
-        {
-            await Task.Delay(TimeSpan.FromSeconds(3));
-            if (cancellationToken.IsCancellationRequested)
-                return;
-
-            DispatcherQueue.TryEnqueue(
-                Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
-                () =>
-                {
-                    if (!cancellationToken.IsCancellationRequested)
-                        PersistComputedTextColors();
-                });
         }
 
         private void RootGrid_PointerPressed(object sender, PointerRoutedEventArgs e)
@@ -4931,11 +4843,32 @@ namespace BlockBox
             // 边框：比背景浅一点点，跟 Flyout 保持一致风格
             ToastBorder.BorderBrush = new SolidColorBrush(ApplyWhiteOverlay(bgColor, 0.15));
 
-            // 文字：跟随全局主文字色
-            if (Application.Current.Resources["TextFillColorPrimaryBrush"] is Brush textBrush)
-                ToastText.Foreground = textBrush;
-            else
-                ToastText.Foreground = new SolidColorBrush(GetContrastColor(bgColor));
+            // 文字：按 Toast 自身背景校正用户颜色，不能复用全局“浅色卡片”文字色。
+            var (globalFontColor, globalAdjust) = ReadFontColorSetting(
+                "PrimaryFontColor",
+                "PrimaryFontColorAuto",
+                SettingsDefaults.PrimaryFontColor,
+                whiteMeansAuto: true);
+            ToastText.Foreground = new SolidColorBrush(
+                ResolveTextColor(bgColor, globalFontColor, globalAdjust));
+        }
+
+        /// <summary>
+        /// 标题栏的系统按钮（最小化/最大化/关闭）也跟随当前字体色，
+        /// 自动模式下则跟随标题栏背景的明暗。
+        /// </summary>
+        private void ApplyTitleBarTextColors(Color textColor)
+        {
+            var titleBar = AppWindow.TitleBar;
+            titleBar.ButtonForegroundColor = textColor;
+            titleBar.ButtonInactiveForegroundColor =
+                Color.FromArgb(128, textColor.R, textColor.G, textColor.B);
+            titleBar.ButtonHoverForegroundColor = textColor;
+            titleBar.ButtonPressedForegroundColor = textColor;
+            titleBar.ButtonHoverBackgroundColor =
+                Color.FromArgb(32, textColor.R, textColor.G, textColor.B);
+            titleBar.ButtonPressedBackgroundColor =
+                Color.FromArgb(48, textColor.R, textColor.G, textColor.B);
         }
 
         /// <summary>
@@ -9477,6 +9410,13 @@ namespace BlockBox
             ResetShortcutMotionState(element);
             PrepareShortcutVisual(element, item);
 
+            // 新建/复用的卡片也要立刻套用当前字体色，否则会停留在主题默认黑色。
+            TextColorHelper.ApplyForegroundToTree(
+                element,
+                _shortcutTextColor,
+                _shortcutTextAdjust,
+                _shortcutTextFallback);
+
             var motionHost = FindChildByName<FrameworkElement>(element, "ShortcutMotionHost");
             if (motionHost != null)
             {
@@ -9628,22 +9568,7 @@ namespace BlockBox
             }
             catch { return false; }
         }
-        private string BackButtonProbe()
-        {
-            try
-            {
-                return SettingsViewControl?.DebugBackButtonForeground() ?? "null";
-            }
-            catch
-            {
-                return "err";
-            }
-        }
 
-        private static void DbgFg(string tag, string value)
-        {
-            System.Diagnostics.Debug.WriteLine($"[FG] {tag} => {value}");
-        }
         /// <summary>
         /// 裁掉透明边距；仅在边缘背景高度一致且主体明显缩小时，才进一步裁掉背景外圈。
         /// </summary>
@@ -9794,8 +9719,6 @@ namespace BlockBox
         // 启动时读取配置并应用
         private void ApplySettings(
             bool reloadNavigation = true,
-            bool recalculateTextColors = false,
-            bool persistComputedTextColors = false,
             bool reloadBackgrounds = true)
         {
             if (_closeAnimationStarted || _allowWindowClose)
@@ -9871,148 +9794,117 @@ namespace BlockBox
             var sharedColor = ParseColor(sharedBackgroundColor);
             var sharedBackgroundBrush = new SolidColorBrush(sharedColor);
             Application.Current.Resources["AppPrimaryBackgroundBrush"] = sharedBackgroundBrush;
-            BlockBox.Helpers.WindowAcrylicHelper.UpdateAll(sharedColor);
             UpdateCustomScrollBarColors();
             TabBarGrid.Background = sharedBackgroundBrush;
             SidebarGrid.BorderBrush = sharedBackgroundBrush;
             LeftBGcolor.Background = sharedBackgroundBrush;
             ContentAreaBorder.Background = sharedBackgroundBrush;
+            SearchBoxBorder.Background = sharedBackgroundBrush;
             // ================= 2. 左侧菜单添加按钮背景颜色 =================
             SidebarAddBt.Background = sharedBackgroundBrush;
 
             CategoryEditPanelControl.ApplyConfirmButtonBackground(sharedBackgroundBrush);
             TabEditPanelControl.ApplyConfirmButtonBackground(sharedBackgroundBrush);
 
-            // ================= 3. 根据父级背景设置文字颜色 =================
-            string configuredFontColor = _ini.ReadValue("Global", "PrimaryFontColor", SettingsDefaults.PrimaryFontColor);
-            var customFontColor = ParseColor(configuredFontColor);
-            bool hasCustomFontColor = !IsWhite(customFontColor);
-            var customColor = hasCustomFontColor ? customFontColor : (Color?)null;
-            string shortcutGridFontColorRaw = _ini.ReadValue("Global", "ShortcutGridFontColor", "");
-            bool hasUserShortcutGridColor = !string.IsNullOrEmpty(shortcutGridFontColorRaw)
-                                            && shortcutGridFontColorRaw.Length >= 7;
-            Windows.UI.Color? userShortcutGridColor = hasUserShortcutGridColor
-                ? ParseColor(shortcutGridFontColorRaw)
-                : (Windows.UI.Color?)null;
+            // 背景决定文字颜色，必须先于取色执行（图片/视频模式会改卡片区背景）。
+            if (reloadBackgrounds)
+                ApplyBackgrounds();
 
-            var calculatedSidebarTextColor = ResolveTextColor(sidebarColor, customColor);
-            var calculatedMainTextColor = ResolveTextColor(mainContentColor, customColor);
-            var calculatedTabBarTextColor = ResolveTextColor(sharedColor, customColor);
-            var settingsTextBgColor = ApplyWhiteOverlay(mainContentColor, 0.9);
-            var calculatedSettingsTextColor = ResolveTextColor(settingsTextBgColor, customColor);
+            // ================= 3. 文字颜色 =================
+            // 自动开关打开：按控件实际背景校正用户颜色的明度；
+            // 关闭：严格使用用户颜色，不做任何混色。
+            var (globalFontColor, globalAdjust) = ReadFontColorSetting(
+                "PrimaryFontColor",
+                "PrimaryFontColorAuto",
+                SettingsDefaults.PrimaryFontColor,
+                whiteMeansAuto: true);
 
-            var panelBgColor = ApplyWhiteOverlay(mainContentColor, 0.9);
-            var calculatedPanelTextColor = ResolveTextColor(panelBgColor, customColor);
-            var panelTextBrush = new SolidColorBrush(calculatedPanelTextColor);
-            var shortcutGridTextColor = ResolveTextColor(
-                panelBgColor,
-                userShortcutGridColor ?? customColor);
-            var shortcutGridFontBrush = new SolidColorBrush(shortcutGridTextColor);
+            var (contentFontColor, contentAdjust) = ReadFontColorSetting(
+                "ShortcutGridFontColor",
+                "ShortcutGridFontColorAuto",
+                SettingsDefaults.ShortcutGridFontColor,
+                whiteMeansAuto: false);
+            // 内容区“跟随全局”只决定使用哪个基础颜色；
+            // 是否按背景自动提亮/压暗统一由全局“自动”开关决定。
+            Color contentTextColor = contentAdjust ? globalFontColor : contentFontColor;
+            bool contentTextAdjust = globalAdjust;
 
-            var calculatedButtonBackgroundColor = TabBarGrid.Background is SolidColorBrush tabBarBrush
-                ? tabBarBrush.Color
-                : sharedColor;
-            var calculatedSidebarAddButtonTextColor = ResolveTextColor(
-                calculatedButtonBackgroundColor,
-                customColor);
-            var calculatedSettingsBackButtonTextColor = ResolveTextColor(
-                calculatedButtonBackgroundColor,
-                customColor);
-            var calculatedSecondaryTextColor = ResolveTextColor(mainContentColor, customColor);
+            var sidebarTextColor = ResolveTextColor(sidebarColor, globalFontColor, globalAdjust);
+            var tabBarTextColor = ResolveTextColor(sharedColor, globalFontColor, globalAdjust);
+            var settingsButtonTextColor = ResolveTextColor(sharedColor, globalFontColor, globalAdjust);
+            // 内容区/设置页/弹层默认是浅色卡片表面（应用固定 Light 主题）；
+            // 自动模式下白色字会在这里被压暗成可读的深色。
+            var cardSurfaceColor = Color.FromArgb(255, 255, 255, 255);
+            var cardTextColor = ResolveTextColor(cardSurfaceColor, globalFontColor, globalAdjust);
 
-            System.Diagnostics.Debug.WriteLine(
-                $"[TextColorDebug] Recalculate={recalculateTextColors}, Persist={persistComputedTextColors}");
-            System.Diagnostics.Debug.WriteLine(
-                $"[TextColorDebug] INI={_iniPath}");
-            System.Diagnostics.Debug.WriteLine(
-                $"[TextColorDebug] PrimaryBackground={FormatColor(primaryBackground)}, " +
-                $"SharedColor={FormatColor(sharedColor)}, " +
-                $"TabBarBackground={FormatColor(calculatedButtonBackgroundColor)}");
-            System.Diagnostics.Debug.WriteLine(
-                $"[TextColorDebug] SidebarAddCalculated={FormatColor(calculatedSidebarAddButtonTextColor)}, " +
-                $"BackButtonCalculated={FormatColor(calculatedSettingsBackButtonTextColor)}, " +
-                $"TabBarTextCalculated={FormatColor(calculatedTabBarTextColor)}");
-
-            bool shouldPersistComputedTextColors = persistComputedTextColors;
-
-            var sidebarTextColor = calculatedSidebarTextColor;
-            var mainTextColor = calculatedMainTextColor;
-            var tabBarTextColor = calculatedTabBarTextColor;
-            var settingsTextColor = calculatedSettingsTextColor;
-            var sidebarAddButtonTextColor = calculatedSidebarAddButtonTextColor;
-            var settingsBackButtonTextColor = calculatedSettingsBackButtonTextColor;
-            var secondaryTextColor = calculatedSecondaryTextColor;
-
-            if (shouldPersistComputedTextColors)
-            {
-                _ini.WriteValue(ComputedTextColorsSection, ComputedSidebarTextColorKey, FormatColor(sidebarTextColor));
-                _ini.WriteValue(ComputedTextColorsSection, ComputedMainTextColorKey, FormatColor(mainTextColor));
-                _ini.WriteValue(ComputedTextColorsSection, ComputedTabBarTextColorKey, FormatColor(tabBarTextColor));
-                _ini.WriteValue(ComputedTextColorsSection, ComputedSettingsTextColorKey, FormatColor(settingsTextColor));
-                _ini.WriteValue(ComputedTextColorsSection, ComputedSidebarAddButtonTextColorKey, FormatColor(sidebarAddButtonTextColor));
-                _ini.WriteValue(ComputedTextColorsSection, ComputedSettingsBackButtonTextColorKey, FormatColor(settingsBackButtonTextColor));
-                _ini.WriteValue(ComputedTextColorsSection, ComputedSecondaryTextColorKey, FormatColor(secondaryTextColor));
-            }
-
-            System.Diagnostics.Debug.WriteLine(
-                $"[TextColorDebug] SidebarAddApplied={FormatColor(sidebarAddButtonTextColor)}, " +
-                $"BackButtonApplied={FormatColor(settingsBackButtonTextColor)}, " +
-                $"TabBarTextApplied={FormatColor(tabBarTextColor)}");
-
-            SidebarAddBt.Foreground = new SolidColorBrush(sidebarAddButtonTextColor);
+            // 二级窗口也跟随同一套字体色；先写入，再让 UpdateAll 只遍历一次。
+            WindowAcrylicHelper.SetTextColor(globalFontColor, globalAdjust, applyToWindows: false);
+            WindowAcrylicHelper.UpdateAll(sharedColor);
 
             var sidebarTextBrush = new SolidColorBrush(sidebarTextColor);
             _sidebarTextBrush = sidebarTextBrush;
-            var mainTextBrush = new SolidColorBrush(mainTextColor);
+            _shortcutTextColor = contentTextColor;
+            _shortcutTextAdjust = contentTextAdjust;
+            _shortcutTextFallback = cardSurfaceColor;
             var tabBarTextBrush = new SolidColorBrush(tabBarTextColor);
-            var secondaryTextBrush = new SolidColorBrush(secondaryTextColor);
+            var cardTextBrush = new SolidColorBrush(cardTextColor);
 
-            SetTextResources(SidebarGrid, sidebarTextBrush, secondaryTextBrush);
-            SetTextResources(MainContentArea, mainTextBrush, secondaryTextBrush);
-            SetTextResources(TabBarGrid, tabBarTextBrush, secondaryTextBrush);
-            SetBrushResource(Application.Current.Resources, "TextFillColorPrimaryBrush", mainTextBrush);
-            SetBrushResource(Application.Current.Resources, "TextFillColorSecondaryBrush", secondaryTextBrush);
+            SetTextResources(SidebarGrid, sidebarTextBrush, sidebarTextBrush);
+            SetTextResources(MainContentArea, cardTextBrush, cardTextBrush);
+            SetTextResources(TabBarGrid, tabBarTextBrush, tabBarTextBrush);
+            SetBrushResource(Application.Current.Resources, "TextFillColorPrimaryBrush", cardTextBrush);
+            SetBrushResource(Application.Current.Resources, "TextFillColorSecondaryBrush", cardTextBrush);
             SetBrushResource(Application.Current.Resources, "TextFillColorSidebarBrush", sidebarTextBrush);
             SetBrushResource(Application.Current.Resources, "TextFillColorTabBarBrush", tabBarTextBrush);
+            Application.Current.Resources["TextFillColorTabBar"] = tabBarTextColor;
 
-            DbgFg("Before-MainContentArea", BackButtonProbe());
-            ApplyForegroundToVisualTree(MainContentArea, mainTextBrush);
-            DbgFg("After-MainContentArea", BackButtonProbe());
-
-            ApplyForegroundToVisualTree(ShortcutGridHost, shortcutGridFontBrush);
-            ApplyForegroundToVisualTree(EditHost, panelTextBrush);
-
-            ApplyForegroundToVisualTree(SidebarGrid, sidebarTextBrush);
-            RefreshPartitionHeaderForegrounds();
-            ApplyForegroundToVisualTree(SidebarAddBt, new SolidColorBrush(sidebarAddButtonTextColor));
-            ExpandButton.Foreground = tabBarTextBrush;
-            CustomAddButton.Foreground = tabBarTextBrush;
-            ApplyForegroundToVisualTree(TabBarGrid, tabBarTextBrush);
-            ApplyForegroundToVisualTree(SearchBoxBorder, tabBarTextBrush);
-            SearchBox.PlaceholderForeground = tabBarTextBrush;
-            AddFileButton.Foreground = tabBarTextBrush;
-            ToolbarCutButton.Foreground = tabBarTextBrush;
-            ToolbarCopyButton.Foreground = tabBarTextBrush;
-            ToolbarPasteButton.Foreground = tabBarTextBrush;
-            ToolbarRenameButton.Foreground = tabBarTextBrush;
-            ToolbarDeleteButton.Foreground = tabBarTextBrush;
-            ToolbarFavoriteButton.Foreground = tabBarTextBrush;
-
-            ModeSwitcher.Foreground = tabBarTextBrush;
+            // 所有背景先落地，再统一遍历一次文字。每个控件只在这里被赋值一次：
+            // - TabBarGrid / 搜索栏 / 快捷方式卡片 / 编辑面板都在 MainContentArea 内统一处理；
+            // - SettingsView 与自绘标签栏各有自己的逻辑，整棵子树跳过；
+            // - Tag="SkipForeground" 的主色按钮由专门的按钮着色逻辑处理。
             ModeSwitcher.Background = new SolidColorBrush(Color.FromArgb(20, 255, 255, 255));
             ExpandButton.Background = new SolidColorBrush(Color.FromArgb(20, 255, 255, 255));
 
-            DbgFg("Before-ApplyCalculatedTextColor", BackButtonProbe());
-            SettingsViewControl.ApplyCalculatedTextColor(settingsTextColor);
-            DbgFg("After-ApplyCalculatedTextColor", BackButtonProbe());
+            TextColorHelper.ApplyForegroundToTree(
+                SidebarGrid,
+                globalFontColor,
+                globalAdjust,
+                sidebarColor);
+            // 内容区字体色只作用于快捷方式卡片区（ShortcutGridHost）。
+            // 标签栏、搜索栏、编辑面板、设置页都使用全局字体色。
+            TextColorHelper.ApplyForegroundToTree(
+                MainContentArea,
+                globalFontColor,
+                globalAdjust,
+                mainContentColor,
+                d => d is SettingsView
+                     || ReferenceEquals(d, ShortcutGridHost)
+                     || ReferenceEquals(d, MyTabView));
+            TextColorHelper.ApplyForegroundToTree(
+                ShortcutGridHost,
+                contentTextColor,
+                contentTextAdjust,
+                mainContentColor,
+                d => d is SettingsView || ReferenceEquals(d, EmptyHintPanel));
 
-            DbgFg("Before-ApplySettingsButtonsTextColor", BackButtonProbe());
-            SettingsViewControl.ApplySettingsButtonsTextColor(settingsBackButtonTextColor);
-            DbgFg("After-ApplySettingsButtonsTextColor", BackButtonProbe());
+            // 空状态提示不属于“卡片文字”，仍使用全局字体色。
+            TextColorHelper.ApplyForegroundToTree(
+                EmptyHintPanel,
+                globalFontColor,
+                globalAdjust,
+                mainContentColor);
 
-            System.Diagnostics.Debug.WriteLine(
-                $"[BtnColor] sidebarAdd={FormatColor(sidebarAddButtonTextColor)}, " +
-                $"tabBar={FormatColor(tabBarTextColor)}");
+            SettingsViewControl.ApplyCalculatedTextColor(globalFontColor, globalAdjust, cardSurfaceColor);
+            SettingsViewControl.ApplySettingsButtonsTextColor(settingsButtonTextColor);
+
+            // MyTabView 整体带 SkipForeground，标签栏尾部的“+”按钮需要单独补色。
+            CustomAddButton.Foreground = tabBarTextBrush;
+
+            var confirmButtonTextBrush = new SolidColorBrush(settingsButtonTextColor);
+            CategoryEditPanelControl.ApplyConfirmButtonForeground(confirmButtonTextBrush);
+            TabEditPanelControl.ApplyConfirmButtonForeground(confirmButtonTextBrush);
+
+            ApplyTitleBarTextColors(tabBarTextColor);
 
             AppMode previousMode = _currentMode;
             string savedMode = _ini.ReadValue(
@@ -10064,21 +9956,14 @@ namespace BlockBox
                 }
             }
 
-            TabBarGrid.Background = sharedBackgroundBrush;
-            SidebarGrid.BorderBrush = sharedBackgroundBrush;
-            var selectedTabTextColor = ResolveTextColor(mainContentColor, customColor);
-            ApplyTabForeground(tabBarTextBrush, new SolidColorBrush(selectedTabTextColor));
-            SearchBoxBorder.Background = sharedBackgroundBrush;
+            // 标签容器要等导航加载完才存在，所以标签栏放在这里单独刷一次。
+            // 标签文字属于全局字体色，不跟随“内容区字体色”。
+            var selectedTabTextColor = ResolveTextColor(
+                mainContentColor,
+                globalFontColor,
+                globalAdjust);
+            ApplyTabForeground(tabBarTextColor, selectedTabTextColor);
 
-            // ================= 4. 动态背景（图片或视频） =================
-            if (reloadBackgrounds)
-                ApplyBackgrounds();
-
-            var sidebarAddBtnTextBrush = new SolidColorBrush(settingsBackButtonTextColor);
-            Application.Current.Resources["TextFillColorTabBar"] = tabBarTextColor;
-            SetBrushResource(Application.Current.Resources, "TextFillColorTabBarBrush", tabBarTextBrush);
-            CategoryEditPanelControl.ApplyConfirmButtonForeground(sidebarAddBtnTextBrush);
-            TabEditPanelControl.ApplyConfirmButtonForeground(sidebarAddBtnTextBrush);
             ApplyToastColors();
         }
         private async void ReloadSettings_Click(object sender, RoutedEventArgs e)
@@ -10098,169 +9983,31 @@ namespace BlockBox
                 System.Diagnostics.Debug.WriteLine("重载配置失败: " + ex.Message);
             }
         }
-        // 辅助方法：将 #AARRGGBB 字符串转成 Color
-        private Color ParseColor(string hex)
-        {
-            hex = hex.Replace("#", "");
-            byte a = 255;
-            byte r = 0, g = 0, b = 0;
-
-            if (hex.Length == 8)
-            {
-                a = Convert.ToByte(hex.Substring(0, 2), 16);
-                r = Convert.ToByte(hex.Substring(2, 2), 16);
-                g = Convert.ToByte(hex.Substring(4, 2), 16);
-                b = Convert.ToByte(hex.Substring(6, 2), 16);
-            }
-            else if (hex.Length == 6)
-            {
-                r = Convert.ToByte(hex.Substring(0, 2), 16);
-                g = Convert.ToByte(hex.Substring(2, 2), 16);
-                b = Convert.ToByte(hex.Substring(4, 2), 16);
-            }
-
-            return Color.FromArgb(a, r, g, b);
-        }
-
-        private static string FormatColor(Color color)
-            => $"#{color.A:X2}{color.R:X2}{color.G:X2}{color.B:X2}";
-
-        private Color ReadComputedTextColor(
-            string key,
-            Color fallback,
-            bool recalculate,
-            bool persistFallback)
-        {
-            string value = _ini.ReadValue(ComputedTextColorsSection, key, "");
-            if (value.Length == 7 || value.Length == 9)
-            {
-                try
-                {
-                    return ParseColor(value);
-                }
-                catch
-                {
-                }
-            }
-
-            _ = recalculate;
-
-            if (persistFallback)
-                _ini.WriteValue(ComputedTextColorsSection, key, FormatColor(fallback));
-
-            return fallback;
-        }
-
-        private static bool IsWhite(Color color)
-            => color.A == 255 && color.R == 255 && color.G == 255 && color.B == 255;
-
-        private static Color GetContrastColor(Color background)
-        {
-            return GetRelativeLuminance(background) >= 0.179
-                ? Color.FromArgb(255, 0, 0, 0)
-                : Color.FromArgb(255, 255, 255, 255);
-        }
-
-        // ==================== 文字颜色解析（WCAG 对比度版） ====================
-
-        // WCAG AA 正文对比度阈值
-        private const double MinContrastRatio = 4.5;
-
-        private static Color ResolveTextColor(Color background, Color? customColor)
-        {
-            Color automaticColor = GetContrastColor(background);
-
-            if (!customColor.HasValue || IsWhite(customColor.Value))
-                return automaticColor;
-
-            Color userColor = customColor.Value;
-            double initialContrast = GetContrastRatio(userColor, background);
-
-            if (initialContrast >= MinContrastRatio)
-                return userColor;
-
-            Color endpoint = GetContrastColor(background);
-            double low = 0;
-            double high = 1;
-            for (int i = 0; i < 24; i++)
-            {
-                double amount = (low + high) / 2;
-                Color candidate = BlendColor(userColor, endpoint, amount);
-                if (GetContrastRatio(candidate, background) >= MinContrastRatio)
-                    high = amount;
-                else
-                    low = amount;
-            }
-
-            return BlendColor(userColor, endpoint, high);
-        }
-
-        private static Color BlendColor(Color source, Color target, double amount)
-        {
-            byte Blend(byte start, byte end)
-                => (byte)Math.Clamp(Math.Round(start + (end - start) * amount), 0, 255);
-
-            return Color.FromArgb(255, Blend(source.R, target.R), Blend(source.G, target.G), Blend(source.B, target.B));
-        }
+        // 辅助方法：将 #AARRGGBB / #RRGGBB 字符串转成 Color
+        private static Color ParseColor(string hex)
+            => TextColorHelper.ParseColor(hex, Color.FromArgb(255, 0, 0, 0));
 
         /// <summary>
-        /// 根据当前对比度算“调整强度”：对比度越低，调得越猛
+        /// 读取字体色及其“自动/自定义”状态。旧配置没有 Auto 键时按默认哨兵色推断。
         /// </summary>
-        private static double ComputeOverlayStrength(double currentContrast)
+        private (Color Color, bool Auto) ReadFontColorSetting(
+            string colorKey,
+            string autoKey,
+            string defaultHex,
+            bool whiteMeansAuto)
         {
-            // 当前 1.0 → 强度 0.6；当前 4.5 → 强度 0.1
-            double t = Math.Clamp(currentContrast / MinContrastRatio, 0, 1);
-            return 0.6 - 0.5 * t;
+            Color color = ParseColor(_ini.ReadValue("Global", colorKey, defaultHex));
+            string raw = _ini.ReadValue("Global", autoKey, string.Empty);
+            bool auto = bool.TryParse(raw, out bool saved)
+                ? saved
+                : (whiteMeansAuto
+                    ? TextColorHelper.IsOpaqueWhite(color)
+                    : TextColorHelper.IsOpaqueBlack(color));
+            return (color, auto);
         }
 
-        /// <summary>
-        /// WCAG 标准对比度：(亮 + 0.05) / (暗 + 0.05)
-        /// </summary>
-        private static double GetContrastRatio(Color a, Color b)
-        {
-            double lumA = GetRelativeLuminance(a);
-            double lumB = GetRelativeLuminance(b);
-
-            double lighter = Math.Max(lumA, lumB);
-            double darker = Math.Min(lumA, lumB);
-
-            return (lighter + 0.05) / (darker + 0.05);
-        }
-
-        /// <summary>
-        /// WCAG 相对亮度（注意：和之前的 GetColorLuminance 不是一回事）
-        /// </summary>
-        private static double GetRelativeLuminance(Color color)
-        {
-            double R = color.R / 255.0;
-            double G = color.G / 255.0;
-            double B = color.B / 255.0;
-
-            R = R <= 0.03928 ? R / 12.92 : Math.Pow((R + 0.055) / 1.055, 2.4);
-            G = G <= 0.03928 ? G / 12.92 : Math.Pow((G + 0.055) / 1.055, 2.4);
-            B = B <= 0.03928 ? B / 12.92 : Math.Pow((B + 0.055) / 1.055, 2.4);
-
-            return 0.2126 * R + 0.7152 * G + 0.0722 * B;
-        }
-
-        private static bool IsLightColor(Color color)
-        {
-            double brightness = (0.299 * color.R + 0.587 * color.G + 0.114 * color.B) / 255.0;
-            return brightness >= 0.3;
-        }
-
-        private static double GetWhiteOverlayOpacity(Color color)
-        {
-            double luminance = GetColorLuminance(color);
-            return luminance < 0.30
-                ? 0.50
-                : luminance < 0.60
-                    ? 0.70
-                    : 0.90;
-        }
-
-        private static double GetColorLuminance(Color color)
-            => (0.299 * color.R + 0.587 * color.G + 0.114 * color.B) / 255.0;
+        private static Color ResolveTextColor(Color background, Color textColor, bool adjustForContrast)
+            => TextColorHelper.ResolveTextColor(background, textColor, adjustForContrast);
 
         private static Color ApplyWhiteOverlay(Color color, double opacity)
         {
@@ -10274,12 +10021,6 @@ namespace BlockBox
                 BlendWithWhite(color.B));
         }
 
-        private static Color DarkenColor(Color color, double amount)
-        {
-            byte Darken(byte channel) => (byte)Math.Round(channel * (1 - amount));
-            return Color.FromArgb(255, Darken(color.R), Darken(color.G), Darken(color.B));
-        }
-
         private static void SetTextResources(FrameworkElement root, Brush primaryBrush, Brush secondaryBrush)
         {
             SetBrushResource(root.Resources, "TextFillColorPrimaryBrush", primaryBrush);
@@ -10289,59 +10030,26 @@ namespace BlockBox
             else if (root.Name == "TabBarGrid")
                 SetBrushResource(root.Resources, "TextFillColorTabBarBrush", primaryBrush);
         }
-        private static void DbgFg(string tag, object target)
-        {
-            if (target is Control c)
-                System.Diagnostics.Debug.WriteLine($"[FG] {tag} -> {c.Name} = {BrushHex(c.Foreground)}");
-            else if (target is TextBlock t)
-                System.Diagnostics.Debug.WriteLine($"[FG] {tag} -> TextBlock = {BrushHex(t.Foreground)}");
-        }
-
-        private static string BrushHex(Brush? b)
-            => b is SolidColorBrush s
-                ? $"#{s.Color.A:X2}{s.Color.R:X2}{s.Color.G:X2}{s.Color.B:X2}"
-                : b?.GetType().Name ?? "null";
-        private static void ApplyForegroundToVisualTree(DependencyObject root, Brush brush)
-        {
-            // ⭐ 显式标记跳过：这些元素的颜色由外部单独控制
-            if (root is FrameworkElement fe && (fe.Tag as string) == "SkipForeground")
-                return;
-            // ⭐ SettingsView 有自己独立的文字颜色系统，从外面污染它就会出问题
-            if (root is BlockBox.Views.SettingsView) return;
-
-            // （可选）如果你想彻底防止按钮被从外部染色，还可以加：
-            // if (root is Microsoft.UI.Xaml.Controls.Primitives.ButtonBase) return;
-
-            if (root is Control control)
-                control.Foreground = brush;
-            else if (root is TextBlock textBlock)
-                textBlock.Foreground = brush;
-            else if (root is FontIcon fontIcon)
-                fontIcon.Foreground = brush;
-
-            if (root is TextBox textBox)
-                textBox.PlaceholderForeground = brush;
-
-            int childCount = VisualTreeHelper.GetChildrenCount(root);
-            for (int i = 0; i < childCount; i++)
-                ApplyForegroundToVisualTree(VisualTreeHelper.GetChild(root, i), brush);
-        }
 
         private static void SetBrushResource(ResourceDictionary resources, string key, Brush brush)
         {
             resources[key] = brush;
         }
 
-        private void ApplyTabForeground(Brush normalBrush, Brush selectedBrush)
+        private void ApplyTabForeground(Color normalColor, Color selectedColor)
         {
-            MyTabView.Foreground = normalBrush;
+            MyTabView.Foreground = new SolidColorBrush(normalColor);
             for (int i = 0; i < TabItems.Count; i++)
             {
                 if (MyTabView.ContainerFromIndex(i) is TabViewItem tabItem)
                 {
                     FontSizeHelper.ApplyGlobalFontSizeToTree(tabItem);
                     bool isSelected = MyTabView.ContainerFromItem(MyTabView.SelectedItem) == tabItem;
-                    tabItem.Foreground = isSelected ? selectedBrush : normalBrush;
+                    Color color = isSelected ? selectedColor : normalColor;
+
+                    // 标签项内部的文字也一并处理，但整棵子树只遍历一次。
+                    // 颜色已经按标签背景算好，这里直接使用，不重复校正。
+                    TextColorHelper.ApplyForegroundToTree(tabItem, color, false, color);
                 }
             }
         }
@@ -10349,16 +10057,25 @@ namespace BlockBox
         private void RefreshSelectedTabForeground()
         {
             var (normalColor, selectedColor) = GetTabForegroundColors();
-            ApplyTabForeground(new SolidColorBrush(normalColor), new SolidColorBrush(selectedColor));
+            ApplyTabForeground(normalColor, selectedColor);
         }
 
         internal (Color Normal, Color Selected) GetTabForegroundColors()
         {
-            Color configuredFontColor = ParseColor(_ini.ReadValue("Global", "PrimaryFontColor", "#FFFFFF"));
-            bool hasCustomFontColor = !IsWhite(configuredFontColor);
-            Color? customColor = hasCustomFontColor ? configuredFontColor : null;
-            Color normalColor = ResolveTextColor(GetTabBarBackgroundColor(), customColor);
-            Color selectedColor = ResolveTextColor(GetMainContentAreaBackgroundColor(), customColor);
+            var (globalFontColor, globalAdjust) = ReadFontColorSetting(
+                "PrimaryFontColor",
+                "PrimaryFontColorAuto",
+                SettingsDefaults.PrimaryFontColor,
+                whiteMeansAuto: true);
+
+            Color normalColor = ResolveTextColor(
+                GetTabBarBackgroundColor(),
+                globalFontColor,
+                globalAdjust);
+            Color selectedColor = ResolveTextColor(
+                GetMainContentAreaBackgroundColor(),
+                globalFontColor,
+                globalAdjust);
             return (normalColor, selectedColor);
         }
         private void ShortcutInteractionHost_DragOver(object sender, DragEventArgs e)
