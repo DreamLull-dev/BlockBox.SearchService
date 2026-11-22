@@ -65,37 +65,13 @@ namespace BlockBox.Helpers
         {
             modifiers = 0;
             key = 0;
-            string[] parts = text.Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            if (parts.Length < 2) return false;
+            if (!HotkeyGesture.TryParse(text, out Windows.System.VirtualKey virtualKey,
+                    out Windows.System.VirtualKeyModifiers virtualModifiers))
+                return false;
 
-            for (int i = 0; i < parts.Length - 1; i++)
-            {
-                switch (parts[i].ToUpperInvariant())
-                {
-                    case "CTRL": case "CONTROL": modifiers |= ModControl; break;
-                    case "ALT": modifiers |= ModAlt; break;
-                    case "SHIFT": modifiers |= ModShift; break;
-                    case "WIN": case "WINDOWS": modifiers |= ModWin; break;
-                    default: return false;
-                }
-            }
-
-            string keyName = parts[^1].ToUpperInvariant();
-            if (keyName.Length == 1 && ((keyName[0] >= 'A' && keyName[0] <= 'Z') || (keyName[0] >= '0' && keyName[0] <= '9')))
-                key = keyName[0];
-            else if (keyName.StartsWith('F') && uint.TryParse(keyName[1..], out uint function) && function is >= 1 and <= 24)
-                key = 0x70 + function - 1;
-            else
-                key = keyName switch
-                {
-                    "SPACE" => 0x20,
-                    "TAB" => 0x09,
-                    "DELETE" => 0x2E,
-                    "INSERT" => 0x2D,
-                    "ESC" or "ESCAPE" => 0x1B,
-                    _ => 0
-                };
-            return key != 0 && modifiers != 0;
+            modifiers = (uint)virtualModifiers;
+            key = (uint)virtualKey;
+            return true;
         }
 
         public void Dispose()

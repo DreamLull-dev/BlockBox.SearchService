@@ -666,16 +666,16 @@ namespace BlockBox.Views
             ClearSearchSelectionAfterAddToggle.IsOn = ReadBool("System", "ClearSearchSelectionAfterAdd", SettingsDefaults.ClearSearchSelectionAfterAdd);
             ConfirmRecycleBinToggle.IsOn = ReadBool("Notification", "ConfirmRecycleBin", SettingsDefaults.ConfirmRecycleBin);
 
-            HotkeyAddTextBox.Text = Read("Hotkeys", "Add", "Ctrl+1");
-            HotkeyCutTextBox.Text = Read("Hotkeys", "Cut", "Ctrl+X");
-            HotkeyCopyTextBox.Text = Read("Hotkeys", "Copy", "Ctrl+C");
-            HotkeyPasteTextBox.Text = Read("Hotkeys", "Paste", "Ctrl+V");
-            HotkeyRenameTextBox.Text = Read("Hotkeys", "Rename", "Ctrl+R");
-            HotkeyDeleteTextBox.Text = Read("Hotkeys", "Delete", "Delete");
-            HotkeyNewCategoryTextBox.Text = Read("Hotkeys", "NewCategory", "Ctrl+2");
-            HotkeyNewTabTextBox.Text = Read("Hotkeys", "NewTab", "Ctrl+3");
-            HotkeySelectAllTextBox.Text = Read("Hotkeys", "SelectAll", "Ctrl+A");
-            HotkeyFavoriteTextBox.Text = Read("Hotkeys", "Favorite", "Ctrl+Q");
+            HotkeyAddTextBox.Text = ReadHotkey("Add", "Ctrl+1");
+            HotkeyCutTextBox.Text = ReadHotkey("Cut", "Ctrl+X");
+            HotkeyCopyTextBox.Text = ReadHotkey("Copy", "Ctrl+C");
+            HotkeyPasteTextBox.Text = ReadHotkey("Paste", "Ctrl+V");
+            HotkeyRenameTextBox.Text = ReadHotkey("Rename", "Ctrl+R");
+            HotkeyDeleteTextBox.Text = ReadHotkey("Delete", "Delete");
+            HotkeyNewCategoryTextBox.Text = ReadHotkey("NewCategory", "Ctrl+2");
+            HotkeyNewTabTextBox.Text = ReadHotkey("NewTab", "Ctrl+3");
+            HotkeySelectAllTextBox.Text = ReadHotkey("SelectAll", "Ctrl+A");
+            HotkeyFavoriteTextBox.Text = ReadHotkey("Favorite", "Ctrl+Q");
 
             _loading = false;
             LanguageService.ApplyLanguage(this, languageCode);
@@ -728,6 +728,7 @@ namespace BlockBox.Views
         }
 
         private string Read(string section, string key, string fallback) => _ini?.ReadValue(section, key, fallback) ?? fallback;
+        private string ReadHotkey(string key, string fallback) => HotkeyGesture.Normalize(Read("Hotkeys", key, fallback));
         private int ReadInt(string section, string key, int fallback) => int.TryParse(Read(section, key, fallback.ToString()), out var value) ? value : fallback;
         private static int ClampComboBoxIndex(ComboBox comboBox, int index)
             => comboBox.Items.Count == 0 ? -1 : Math.Clamp(index, 0, comboBox.Items.Count - 1);
@@ -960,10 +961,21 @@ namespace BlockBox.Views
 
         private string? FindHotkeyConflict(TextBox currentTextBox, string gesture)
         {
+            bool gestureParsed = HotkeyGesture.TryParse(gesture,
+                out Windows.System.VirtualKey gestureKey, out Windows.System.VirtualKeyModifiers gestureModifiers);
+
             foreach (TextBox textBox in GetHotkeyTextBoxes())
             {
                 if (ReferenceEquals(textBox, currentTextBox))
                     continue;
+
+                if (gestureParsed
+                    && HotkeyGesture.TryParse(textBox.Text,
+                        out Windows.System.VirtualKey otherKey, out Windows.System.VirtualKeyModifiers otherModifiers)
+                    && otherKey == gestureKey && otherModifiers == gestureModifiers)
+                {
+                    return GetHotkeyDisplayName(textBox);
+                }
 
                 if (string.Equals(textBox.Text, gesture, StringComparison.OrdinalIgnoreCase))
                     return GetHotkeyDisplayName(textBox);
@@ -1033,17 +1045,7 @@ namespace BlockBox.Views
                 or Windows.System.VirtualKey.LeftWindows or Windows.System.VirtualKey.RightWindows;
 
         private static bool IsValidHotkey(Windows.System.VirtualKey key, Windows.System.VirtualKeyModifiers modifiers)
-        {
-            if (IsModifierKey(key)) return false;
-            if (modifiers != Windows.System.VirtualKeyModifiers.None) return true;
-            return key is >= Windows.System.VirtualKey.F1 and <= Windows.System.VirtualKey.F24
-                or Windows.System.VirtualKey.Delete
-                or Windows.System.VirtualKey.Insert
-                or Windows.System.VirtualKey.Home
-                or Windows.System.VirtualKey.End
-                or Windows.System.VirtualKey.PageUp
-                or Windows.System.VirtualKey.PageDown;
-        }
+            => HotkeyGesture.IsValidGesture(key, modifiers);
 
         private static Windows.System.VirtualKeyModifiers GetCurrentModifiers()
         {
@@ -1066,38 +1068,18 @@ namespace BlockBox.Views
                 .HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
 
         private static string FormatModifiers(Windows.System.VirtualKeyModifiers modifiers)
-        {
-            var parts = new List<string>();
-            if (modifiers.HasFlag(Windows.System.VirtualKeyModifiers.Control)) parts.Add("Ctrl");
-            if (modifiers.HasFlag(Windows.System.VirtualKeyModifiers.Menu)) parts.Add("Alt");
-            if (modifiers.HasFlag(Windows.System.VirtualKeyModifiers.Shift)) parts.Add("Shift");
-            if (modifiers.HasFlag(Windows.System.VirtualKeyModifiers.Windows)) parts.Add("Win");
-            return string.Join("+", parts);
-        }
+            => HotkeyGesture.FormatModifiers(modifiers);
 
         private static string FormatHotkey(Windows.System.VirtualKey key, Windows.System.VirtualKeyModifiers modifiers)
-        {
-            string keyName = key switch
-            {
-                Windows.System.VirtualKey.Back => "Backspace",
-                Windows.System.VirtualKey.Escape => "Esc",
-                Windows.System.VirtualKey.Space => "Space",
-                Windows.System.VirtualKey.Enter => "Enter",
-                Windows.System.VirtualKey.Tab => "Tab",
-                Windows.System.VirtualKey.Delete => "Delete",
-                Windows.System.VirtualKey.PageUp => "PageUp",
-                Windows.System.VirtualKey.PageDown => "PageDown",
-                _ => key.ToString()
-            };
-            string prefix = FormatModifiers(modifiers);
-            return string.IsNullOrEmpty(prefix) ? keyName : $"{prefix}+{keyName}";
-        }
+            => HotkeyGesture.Format(key, modifiers);
 
         private void SaveHotkey(TextBox textBox, string gesture)
         {
             string key = GetHotkeyKey(textBox);
             if (string.IsNullOrEmpty(key)) return;
 
+            // 统一存成规范写法（Ctrl+1 而不是 Ctrl+Number1），解析端和显示端就不会再打架。
+            gesture = HotkeyGesture.Normalize(gesture);
             _ini?.WriteValue("Hotkeys", key, gesture);
             SettingsChanged?.Invoke(this, EventArgs.Empty);
         }

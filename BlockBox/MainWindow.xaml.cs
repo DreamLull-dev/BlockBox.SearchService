@@ -848,7 +848,7 @@ namespace BlockBox
             foreach (var binding in bindings)
             {
                 binding.Item.KeyboardAcceleratorTextOverride = isVisible
-                    ? _ini.ReadValue("Hotkeys", binding.Key, binding.DefaultGesture)
+                    ? HotkeyGesture.Normalize(_ini.ReadValue("Hotkeys", binding.Key, binding.DefaultGesture))
                     : string.Empty;
             }
         }
@@ -3246,10 +3246,16 @@ namespace BlockBox
                 ("NewTab", "Ctrl+3", FileNewTabMenuItem, (s, e) => MenuNewTab_Click(s, e))
             };
 
+            var seenGestures = new HashSet<(Windows.System.VirtualKey Key, Windows.System.VirtualKeyModifiers Modifiers)>();
+
             foreach (var binding in bindings)
             {
                 string gesture = _ini.ReadValue("Hotkeys", binding.Key, binding.Gesture);
                 if (!TryParseKeyboardGesture(gesture, out var key, out var modifiers))
+                    continue;
+
+                // 旧配置里可能存在重复手势：只注册第一个，避免同一次按键触发多个动作。
+                if (!seenGestures.Add((key, modifiers)))
                     continue;
 
                 var keyboardAccelerator = new KeyboardAccelerator
@@ -3276,51 +3282,7 @@ namespace BlockBox
         }
 
         private static bool TryParseKeyboardGesture(string gesture, out Windows.System.VirtualKey key, out Windows.System.VirtualKeyModifiers modifiers)
-        {
-            key = Windows.System.VirtualKey.None;
-            modifiers = Windows.System.VirtualKeyModifiers.None;
-            if (string.IsNullOrWhiteSpace(gesture))
-                return false;
-
-            // 与设置页输出保持兼容：统一全角加号/空白后再解析
-            gesture = gesture.Replace('＋', '+');
-            string[] parts = gesture.Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-            if (parts.Length == 1)
-            {
-                return Enum.TryParse(parts[0], ignoreCase: true, out key)
-                    && key == Windows.System.VirtualKey.Delete;
-            }
-            if (parts.Length < 2)
-                return false;
-
-            for (int i = 0; i < parts.Length - 1; i++)
-            {
-                switch (parts[i].ToUpperInvariant())
-                {
-                    case "CTRL": case "CONTROL": modifiers |= Windows.System.VirtualKeyModifiers.Control; break;
-                    case "ALT": modifiers |= Windows.System.VirtualKeyModifiers.Menu; break;
-                    case "SHIFT": modifiers |= Windows.System.VirtualKeyModifiers.Shift; break;
-                    case "WIN": case "WINDOWS": case "META": modifiers |= Windows.System.VirtualKeyModifiers.Windows; break;
-                    default: return false;
-                }
-            }
-
-            string keyName = parts[^1].ToUpperInvariant();
-            if (keyName.Length == 1 && keyName[0] is >= 'A' and <= 'Z')
-                key = (Windows.System.VirtualKey)keyName[0];
-            else if (keyName.Length == 1 && keyName[0] is >= '0' and <= '9')
-                key = (Windows.System.VirtualKey)((int)Windows.System.VirtualKey.Number0 + keyName[0] - '0');
-            else if (keyName.StartsWith("F") && int.TryParse(keyName[1..], out int function) && function is >= 1 and <= 24)
-                key = (Windows.System.VirtualKey)((int)Windows.System.VirtualKey.F1 + function - 1);
-            else if (keyName is "ESC" or "ESCAPE")
-                key = Windows.System.VirtualKey.Escape;
-            else if (keyName is "BACKSPACE" or "BACK")
-                key = Windows.System.VirtualKey.Back;
-            else if (!Enum.TryParse(keyName, ignoreCase: true, out key))
-                return false;
-
-            return key != Windows.System.VirtualKey.None && modifiers != Windows.System.VirtualKeyModifiers.None;
-        }
+            => HotkeyGesture.TryParse(gesture, out key, out modifiers);
 
         private void SettingsView_DatabaseRestoredRequested(object? sender, EventArgs e)
         {
