@@ -860,6 +860,65 @@
 
                         <Border Padding="16" CornerRadius="8" BorderThickness="0.6" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}">
                             <StackPanel Spacing="0">
+                                <TextBlock Text="{x:Bind helpers:LanguageService.Translate('扫描与分类'), Mode=OneWay}" FontSize="{x:Bind helpers:FontSizeHelper.SettingsTitleInitialFontSize}" FontWeight="SemiBold" Margin="0,0,0,4"/>
+
+                                <!-- 扫描安装程序 -->
+                                <Grid Padding="0,10" ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="{x:Bind helpers:LanguageService.Translate('扫描安装程序'), Mode=OneWay}"/>
+                                        <TextBlock Text="{x:Bind helpers:LanguageService.Translate('扫描本机已安装程序并按分类导入'), Mode=OneWay}"
+                                                   FontSize="{x:Bind helpers:FontSizeHelper.SettingsSmallInitialFontSize}"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                   Margin="0,2,0,0"
+                                                   TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <Button Grid.Column="1" x:Name="ImportProgramsButton"
+                                            helpers:PressAnimationHelper.EnableBounce="True"
+                                            Tag="SkipForeground"
+                                            Content="{x:Bind helpers:LanguageService.Translate('开始扫描'), Mode=OneWay}"
+                                            Width="100" Height="32"
+                                            Opacity="1"
+                                            Style="{StaticResource CustomAddButtonStyle}"
+                                            Background="{x:Bind PrimaryButtonBackground, Mode=OneWay}"
+                                            CornerRadius="15"
+                                            VerticalAlignment="Center"
+                                            Click="ImportInstalledPrograms_Click" />
+                                </Grid>
+
+                                <Rectangle Height="0.5" Fill="{ThemeResource DividerStrokeColorDefaultBrush}"/>
+
+                                <Grid Padding="0,10" ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock Text="{x:Bind helpers:LanguageService.Translate('程序分类记录'), Mode=OneWay}"/>
+                                        <TextBlock Text="{x:Bind helpers:LanguageService.Translate('管理手动分类记录和自动分类排除规则'), Mode=OneWay}"
+                                                   FontSize="{x:Bind helpers:FontSizeHelper.SettingsSmallInitialFontSize}"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <Button Grid.Column="1" x:Name="ManageProgramCategoryHistoryButton"
+                                            helpers:PressAnimationHelper.EnableBounce="True"
+                                            Tag="SkipForeground"
+                                            Content="{x:Bind helpers:LanguageService.Translate('管理'), Mode=OneWay}"
+                                            Width="100" Height="32"
+                                            Opacity="1"
+                                            Style="{StaticResource CustomAddButtonStyle}"
+                                            Background="{x:Bind PrimaryButtonBackground, Mode=OneWay}"
+                                            CornerRadius="15"
+                                            VerticalAlignment="Center"
+                                            Click="ManageProgramCategoryHistory_Click"/>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Padding="16" CornerRadius="8" BorderThickness="0.6" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}">
+                            <StackPanel Spacing="0">
                                 <TextBlock Text="{x:Bind helpers:LanguageService.Translate('扫描选项'), Mode=OneWay}" FontSize="{x:Bind helpers:FontSizeHelper.SettingsTitleInitialFontSize}" FontWeight="SemiBold" Margin="0,0,0,4"/>
 
                                 <Grid Padding="0,10" ColumnSpacing="12">
@@ -1014,60 +1073,6 @@
                         <TextBlock Text="{x:Bind helpers:LanguageService.Translate('数据 / 备份'), Mode=OneWay}" FontSize="{x:Bind helpers:FontSizeHelper.SettingsTitleInitialFontSize}" FontWeight="SemiBold" />
                         <Border Padding="16" CornerRadius="8" BorderThickness="0.6" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}">
                             <StackPanel Spacing="0">
-
-                                <!-- 扫描安装程序 -->
-                                <Grid Padding="0,10" ColumnSpacing="12">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel VerticalAlignment="Center">
-                                        <TextBlock Text="{x:Bind helpers:LanguageService.Translate('扫描安装程序'), Mode=OneWay}"/>
-                                        <TextBlock Text="{x:Bind helpers:LanguageService.Translate('扫描本机已安装程序并按分类导入'), Mode=OneWay}"
-                                                   FontSize="{x:Bind helpers:FontSizeHelper.SettingsSmallInitialFontSize}"
-                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                                   Margin="0,2,0,0"
-                                                   TextWrapping="Wrap"/>
-                                    </StackPanel>
-                                    <Button Grid.Column="1" x:Name="ImportProgramsButton"
-                                            helpers:PressAnimationHelper.EnableBounce="True"
-                                            Tag="SkipForeground"
-                                            Content="{x:Bind helpers:LanguageService.Translate('开始扫描'), Mode=OneWay}"
-                                            Width="100" Height="32"
-                                            Opacity="1"
-                                            Style="{StaticResource CustomAddButtonStyle}"
-                                            Background="{x:Bind PrimaryButtonBackground, Mode=OneWay}"
-                                            CornerRadius="15"
-                                            VerticalAlignment="Center"
-                                            Click="ImportInstalledPrograms_Click" />
-                                </Grid>
-
-                                <Rectangle Height="0.5" Fill="{ThemeResource DividerStrokeColorDefaultBrush}"/>
-
-                                <Grid Padding="0,10" ColumnSpacing="12">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel VerticalAlignment="Center">
-                                        <TextBlock Text="{x:Bind helpers:LanguageService.Translate('程序分类记录'), Mode=OneWay}"/>
-                                        <TextBlock Text="{x:Bind helpers:LanguageService.Translate('管理手动分类记录和自动分类排除规则'), Mode=OneWay}"
-                                                   FontSize="{x:Bind helpers:FontSizeHelper.SettingsSmallInitialFontSize}"
-                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap"/>
-                                    </StackPanel>
-                                    <Button Grid.Column="1" x:Name="ManageProgramCategoryHistoryButton"
-                                            helpers:PressAnimationHelper.EnableBounce="True"
-                                            Tag="SkipForeground"
-                                            Content="{x:Bind helpers:LanguageService.Translate('管理'), Mode=OneWay}"
-                                            Width="100" Height="32" 
-                                            Opacity="1"
-                                            Style="{StaticResource CustomAddButtonStyle}"
-                                            Background="{x:Bind PrimaryButtonBackground, Mode=OneWay}"
-                                            CornerRadius="15"
-                                            VerticalAlignment="Center"
-                                            Click="ManageProgramCategoryHistory_Click"/>
-                                </Grid>
-                                <Rectangle Height="0.5" Fill="{ThemeResource DividerStrokeColorDefaultBrush}"/>
 
                                 <!-- 导出配置 -->
                                 <Grid Padding="0,10" ColumnSpacing="12">
