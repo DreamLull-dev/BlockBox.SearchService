@@ -4,8 +4,14 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:helpers="using:BlockBox.Helpers"
     Title="">
-    <Grid x:Name="RootGrid" Padding="6" Loaded="RootGrid_Loaded" KeyDown="RootGrid_KeyDown">
+    <Grid x:Name="RootGrid" Padding="6" Loaded="RootGrid_Loaded" KeyDown="RootGrid_KeyDown" Background="Transparent">
         <Grid.Resources>
+            <Style TargetType="TextBlock">
+                <Setter Property="Foreground" Value="#FF1F1F1F" />
+            </Style>
+            <Style TargetType="FontIcon">
+                <Setter Property="Foreground" Value="#FF1F1F1F" />
+            </Style>
             <Style x:Key="TrayMenuButtonStyle" TargetType="Button">
                 <Setter Property="Background" Value="Transparent" />
                 <Setter Property="BorderThickness" Value="0" />
@@ -19,8 +25,8 @@
         </Grid.Resources>
         <Border x:Name="MenuBorder"
                 CornerRadius="8"
-                Background="{ThemeResource AcrylicInAppFillColorDefaultBrush}"
-                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                Background="#F9FFFFFF"
+                BorderBrush="#22000000"
                 BorderThickness="1"
                 Padding="4">
             <StackPanel Spacing="0">

@@ -36,7 +36,8 @@ namespace BlockBox.Views
         {
             InitializeComponent();
 
-            WindowAcrylicHelper.Apply(this);
+            // 不用 WindowAcrylicHelper：它会把全局字体色（默认白色）刷到整棵树，
+            // 在浅色菜单上会变成白字看不清。这里用固定浅色面板 + 深色文字。
             ModalWindowHelper.ConfigureBorderlessWindow(this);
             WindowFadeController.Prepare(this);
 
