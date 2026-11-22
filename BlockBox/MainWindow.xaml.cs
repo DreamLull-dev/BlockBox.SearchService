@@ -109,6 +109,7 @@ namespace BlockBox
         /// </summary>
         private bool _deferredShellClose;
         private TrayIconService? _trayIcon;
+        private bool _trayMenuOpen;
         private RecycleBinWindow? _recycleBinWindow;
         private ViewManagementWindow? _viewManagementWindow;
         private GlobalSearchWindow? _globalSearchWindow;
@@ -372,6 +373,7 @@ namespace BlockBox
             _trayIcon.ShowExistingInstanceRequested += (_, _) => RestoreMainWindow();
             _trayIcon.GlobalSearchRequested += TrayIcon_GlobalSearchRequested;
             _trayIcon.SettingsRequested += TrayIcon_SettingsRequested;
+            _trayIcon.ContextMenuRequested += TrayIcon_ContextMenuRequested;
             _trayIcon.MinimizedRequested += MainWindow_MinimizedRequested;
             _trayIcon.ExitRequested += (_, _) =>
             {
@@ -2906,6 +2908,50 @@ namespace BlockBox
             // 托盘菜单的命令是在托盘窗口过程里派发的，直接创建/激活窗口容易和菜单收尾撞在一起；
             // 排到消息队列末尾再执行，行为和点主界面搜索入口保持一致。
             DispatcherQueue.TryEnqueue(() => ShowGlobalSearchWindow());
+        }
+
+        private void TrayIcon_ContextMenuRequested(object? sender, TrayMenuRequestEventArgs e)
+        {
+            // 托盘回调在窗口过程里触发，排到消息队列末尾再创建 WinUI 窗口，避免重入。
+            DispatcherQueue.TryEnqueue(() => _ = ShowTrayMenuAsync(e));
+        }
+
+        private async Task ShowTrayMenuAsync(TrayMenuRequestEventArgs e)
+        {
+            if (_trayMenuOpen) return;
+
+            _trayMenuOpen = true;
+            try
+            {
+                var menu = new TrayMenuWindow(e.ScreenX, e.ScreenY);
+                menu.Activate();
+                var action = await menu.Result;
+
+                switch (action)
+                {
+                    case TrayMenuAction.Show:
+                        RestoreMainWindow();
+                        break;
+                    case TrayMenuAction.GlobalSearch:
+                        DispatcherQueue.TryEnqueue(() => ShowGlobalSearchWindow());
+                        break;
+                    case TrayMenuAction.Settings:
+                        RestoreMainWindow();
+                        await OpenSettingsAsync();
+                        break;
+                    case TrayMenuAction.Hide:
+                        _trayIcon?.Hide();
+                        break;
+                    case TrayMenuAction.Exit:
+                        _allowWindowClose = true;
+                        Application.Current.Exit();
+                        break;
+                }
+            }
+            finally
+            {
+                _trayMenuOpen = false;
+            }
         }
 
         private async void TrayIcon_SettingsRequested(object? sender, EventArgs e)

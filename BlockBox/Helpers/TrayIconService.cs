@@ -5,6 +5,18 @@ using System.Runtime.InteropServices;
 
 namespace BlockBox.Helpers
 {
+    public sealed class TrayMenuRequestEventArgs : EventArgs
+    {
+        public TrayMenuRequestEventArgs(int screenX, int screenY)
+        {
+            ScreenX = screenX;
+            ScreenY = screenY;
+        }
+
+        public int ScreenX { get; }
+        public int ScreenY { get; }
+    }
+
     public sealed class TrayIconService : IDisposable
     {
         private const int GwlWndProc = -4;
@@ -62,6 +74,9 @@ namespace BlockBox.Helpers
         public event EventHandler? SettingsRequested;
         public event EventHandler? GlobalSearchRequested;
         public event EventHandler? ShowExistingInstanceRequested;
+
+        /// <summary>托盘右键：交给主窗体显示 WinUI 菜单（图标 + 文本，和程序内菜单一致）。</summary>
+        public event EventHandler<TrayMenuRequestEventArgs>? ContextMenuRequested;
 
         public TrayIconService(Window window, string? iconPath = null)
         {
@@ -175,48 +190,9 @@ namespace BlockBox.Helpers
 
         private void ShowContextMenu()
         {
-            IntPtr menu = CreatePopupMenu();
-            if (menu == IntPtr.Zero)
-                return;
-
-            try
-            {
-                AppendMenu(menu, MfString, MenuShow, LanguageService.Translate("显示 BlockBox"));
-                AppendMenu(menu, MfString, MenuGlobalSearch, LanguageService.Translate("显示全局搜索"));
-                AppendMenu(menu, MfString, MenuSettings, LanguageService.Translate("设置"));
-                uint hideMenuFlags = IsWindowVisible(_hwnd) ? MfString : MfString | MfGrayed;
-                AppendMenu(menu, hideMenuFlags, MenuHide, LanguageService.Translate("隐藏 BlockBox 界面"));
-                AppendMenu(menu, MfString, MenuExit, LanguageService.Translate("退出"));
-                GetCursorPos(out POINT point);
-                SetForegroundWindow(_hwnd);
-                uint alignment = IsCursorInRightHalf(point) ? TpmRightAlign : TpmLeftAlign;
-                uint command = TrackPopupMenu(
-                    menu,
-                    TpmLeftButton | TpmRightButton | TpmBottomAlign | alignment | TpmReturnCommand,
-                    point.X,
-                    point.Y,
-                    0,
-                    _hwnd,
-                    IntPtr.Zero);
-                if (command == MenuShow)
-                    RestoreRequested?.Invoke(this, EventArgs.Empty);
-                else if (command == MenuHide)
-                {
-                    if (IsWindowVisible(_hwnd))
-                        Hide();
-                }
-                else if (command == MenuExit)
-                    ExitRequested?.Invoke(this, EventArgs.Empty);
-                else if (command == MenuSettings)
-                    SettingsRequested?.Invoke(this, EventArgs.Empty);
-                else if (command == MenuGlobalSearch)
-                    GlobalSearchRequested?.Invoke(this, EventArgs.Empty);
-                PostMessage(_hwnd, 0, IntPtr.Zero, IntPtr.Zero);
-            }
-            finally
-            {
-                DestroyMenu(menu);
-            }
+            GetCursorPos(out POINT point);
+            SetForegroundWindow(_hwnd);
+            ContextMenuRequested?.Invoke(this, new TrayMenuRequestEventArgs(point.X, point.Y));
         }
 
         private static bool IsCursorInRightHalf(POINT point)
