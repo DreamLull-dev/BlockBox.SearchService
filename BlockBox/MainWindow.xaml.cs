@@ -7843,6 +7843,13 @@ namespace BlockBox
             }
 
             bool excludePrograms = deleteScope == 3;
+            var defaultCategoryIds = isDefaultAppCategoryView
+                ? BlockBox.Data.CategoryRepository.GetVisible(_currentMode)
+                    .Where(IsDefaultApplicationCategory)
+                    .Select(category => category.Id)
+                    .ToList()
+                : new List<string>();
+
             foreach (var shortcut in shortcuts)
             {
                 if (allApplications)
@@ -7854,8 +7861,8 @@ namespace BlockBox
                     }
                     else if (isDefaultAppCategoryView)
                     {
-                        // 只删 4 个默认分类里的记录，保留自定义分类。
-                        RecycleBinRepository.MoveByTargetPathShared(shortcut.TargetPath);
+                        // 只删默认分类（全部应用/办公/音乐/游戏）里的记录，保留自定义分类。
+                        RecycleBinRepository.MoveByTargetPathInDefaultCategories(shortcut.TargetPath, defaultCategoryIds);
                     }
                     else
                     {
@@ -7923,10 +7930,14 @@ namespace BlockBox
             {
                 if (isDefaultAppCategoryView)
                 {
+                    var defaultCategoryIds = BlockBox.Data.CategoryRepository.GetVisible(_currentMode)
+                        .Where(IsDefaultApplicationCategory)
+                        .Select(category => category.Id)
+                        .ToList();
                     if (deleteAllCategories)
                         RecycleBinRepository.MoveByTargetPath(shortcut.TargetPath);
                     else
-                        RecycleBinRepository.MoveByTargetPathShared(shortcut.TargetPath);
+                        RecycleBinRepository.MoveByTargetPathInDefaultCategories(shortcut.TargetPath, defaultCategoryIds);
                 }
                 else
                 {

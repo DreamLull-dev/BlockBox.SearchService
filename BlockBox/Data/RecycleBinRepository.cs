@@ -91,6 +91,35 @@ namespace BlockBox.Data
             return MoveIds(ids);
         }
 
+        /// <summary>
+        /// 把同名记录从“默认分类集合”里移入回收站：既处理共享分类表，也处理历史遗留的
+        /// Shortcuts 表里挂在默认分类下的记录，但保留自定义分类里的记录。
+        /// </summary>
+        public static int MoveByTargetPathInDefaultCategories(string targetPath, IReadOnlyList<string> defaultCategoryIds)
+        {
+            var ids = GetIds("SELECT Id FROM SharedShortcuts WHERE TargetPath=@value COLLATE NOCASE", targetPath);
+
+            if (defaultCategoryIds.Count > 0)
+            {
+                using var conn = DatabaseContext.OpenConnection();
+                using var cmd = conn.CreateCommand();
+                var names = new List<string>(defaultCategoryIds.Count);
+                for (int i = 0; i < defaultCategoryIds.Count; i++)
+                {
+                    string name = "@c" + i;
+                    names.Add(name);
+                    cmd.Parameters.AddWithValue(name, defaultCategoryIds[i]);
+                }
+                cmd.CommandText = "SELECT Id FROM Shortcuts WHERE TargetPath=@value COLLATE NOCASE AND CategoryId IN (" +
+                                  string.Join(",", names) + ")";
+                cmd.Parameters.AddWithValue("@value", targetPath);
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read()) ids.Add(reader.GetString(0));
+            }
+
+            return MoveIds(ids);
+        }
+
         public static int MoveByCategory(string categoryId)
         {
             var ids = GetIds("SELECT Id FROM Shortcuts WHERE CategoryId=@value UNION SELECT Id FROM SharedShortcuts WHERE CategoryId=@value", categoryId);
