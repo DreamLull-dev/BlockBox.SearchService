@@ -8147,7 +8147,10 @@ namespace BlockBox
             {
                 string identity = BlockBox.Helpers.ProgramIdentity.Get(path);
                 string exeKey = BlockBox.Helpers.ProgramIdentity.ResolveTarget(path);
-                if (existing.Contains(identity) || existingExeKeys.Contains(exeKey))
+                var shortcutInfo = BlockBox.Services.InstalledProgramScanner.ResolveShortcutInfo(path);
+                bool benignArguments = shortcutInfo == null
+                    || BlockBox.Services.InstalledProgramScanner.IsBenignLaunchArgument(shortcutInfo.Arguments);
+                if (existing.Contains(identity) || (benignArguments && existingExeKeys.Contains(exeKey)))
                 {
                     duplicated++;
                     dupNames.Add(System.IO.Path.GetFileName(path));
@@ -8564,11 +8567,19 @@ namespace BlockBox
             if (allApps == null)
                 return;
 
+            string sourceIdentity = BlockBox.Helpers.ProgramIdentity.Get(source.TargetPath, source.Arguments);
+            string sourceExeKey = BlockBox.Helpers.ProgramIdentity.ResolveTarget(source.TargetPath);
+            bool benignSourceArguments = BlockBox.Services.InstalledProgramScanner.IsBenignLaunchArgument(source.Arguments);
             bool alreadyExists = BlockBox.Data.ShortcutRepository.GetByCategory(_currentMode, allApps.Id)
                 .Any(item => string.Equals(
-                    BlockBox.Helpers.ProgramIdentity.Get(item.TargetPath, item.Arguments),
-                    BlockBox.Helpers.ProgramIdentity.Get(source.TargetPath, source.Arguments),
-                    StringComparison.Ordinal));
+                        BlockBox.Helpers.ProgramIdentity.Get(item.TargetPath, item.Arguments),
+                        sourceIdentity,
+                        StringComparison.Ordinal)
+                    || (benignSourceArguments
+                        && string.Equals(
+                            BlockBox.Helpers.ProgramIdentity.ResolveTarget(item.TargetPath),
+                            sourceExeKey,
+                            StringComparison.OrdinalIgnoreCase)));
             if (alreadyExists)
                 return;
 

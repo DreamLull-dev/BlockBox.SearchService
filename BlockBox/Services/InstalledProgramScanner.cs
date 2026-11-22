@@ -721,35 +721,56 @@ namespace BlockBox.Services
                     || !shortcutExeKeys.Contains(NormalizeIdentityPath(item.RealTarget)))
                 .ToList();
 
-            var grouped = valid.GroupBy(x => x.Info.Identity, StringComparer.Ordinal);
+            // 先按“真实目标”分组（同一个 exe），再处理启动参数：
+            // · 参数只是启动入口/最小化之类（/run:desktop、/run:winmenu…）→ 只保留桌面/完整客户端一条；
+            // · 参数有实际差异（比如 Clash 的不同模式）→ 都保留，并在名称后加参数区分。
+            var grouped = valid.GroupBy(x => NormalizeIdentityPath(x.RealTarget), StringComparer.OrdinalIgnoreCase);
             var final = new List<InstalledProgramInfo>();
             int duplicateCount = 0;
 
             foreach (var group in grouped)
             {
-                var entries = group.ToList();
-                if (entries.Count > 1)
+                var entries = group
+                    .GroupBy(x => (x.Info.Arguments ?? "").Trim(), StringComparer.Ordinal)
+                    .Select(g => g.OrderByDescending(x => SourcePriority(x.Info.Source))
+                        .ThenByDescending(x => (x.Info.DisplayName ?? "").Length)
+                        .First())
+                    .ToList();
+
+                duplicateCount += group.Count() - entries.Count;
+
+                var meaningful = entries
+                    .Where(x => !IsBenignLaunchArgument(x.Info.Arguments))
+                    .ToList();
+
+                if (meaningful.Count == 0)
+                {
+                    // 都是入口/最小化参数：优先桌面（完整客户端），其次按来源优先级。
+                    var desktopEntry = entries.FirstOrDefault(x =>
+                        (x.Info.Arguments ?? "").IndexOf("desktop", StringComparison.OrdinalIgnoreCase) >= 0);
+                    var chosen = desktopEntry.Info != null
+                        ? desktopEntry
+                        : entries.OrderByDescending(x => SourcePriority(x.Info.Source)).First();
+
                     duplicateCount += entries.Count - 1;
+                    final.Add(MaterializeProgram(chosen, group));
+                    continue;
+                }
 
-                var best = PickBestEntry(entries.Select(x => x.Info).ToList());
-                var bestEntry = entries.First(x => ReferenceEquals(x.Info, best));
-                var shortcutEntry = entries
-                    .Where(x => IsShortcutSource(x.Info.Source))
-                    .OrderByDescending(x => SourcePriority(x.Info.Source))
-                    .FirstOrDefault();
+                duplicateCount += entries.Count - meaningful.Count;
 
-                bool hasShortcut = shortcutEntry.Info != null;
-                best.TargetPath = hasShortcut ? shortcutEntry.Info.TargetPath : bestEntry.RealTarget;
-                best.Arguments = hasShortcut ? shortcutEntry.Info.Arguments : "";
-                best.WorkingDirectory = hasShortcut ? shortcutEntry.Info.WorkingDirectory : "";
-                best.ResolvedTargetPath ??= hasShortcut ? shortcutEntry.RealTarget : bestEntry.RealTarget;
-                best.PreferredIconSourcePath = entries
-                    .Where(x => IsShortcutSource(x.Info.Source))
-                    .OrderByDescending(x => SourcePriority(x.Info.Source))
-                    .Select(x => x.Info.PreferredIconSourcePath)
-                    .FirstOrDefault(path => !string.IsNullOrWhiteSpace(path));
-                best.Identity = group.Key;
-                final.Add(best);
+                var nameCounts = meaningful
+                    .GroupBy(x => (x.Info.DisplayName ?? "").Trim(), StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
+
+                foreach (var entry in meaningful)
+                {
+                    var program = MaterializeProgram(entry, group);
+                    string name = (program.DisplayName ?? "").Trim();
+                    if (nameCounts.TryGetValue(name, out int count) && count > 1)
+                        program.DisplayName = BuildVariantDisplayName(name, entry.Info.Arguments);
+                    final.Add(program);
+                }
             }
 
             stats.DuplicatesRemoved = duplicateCount;
@@ -874,6 +895,53 @@ namespace BlockBox.Services
             => list.OrderByDescending(p => SourcePriority(p.Source))
                 .ThenByDescending(p => (p.DisplayName ?? "").Length)
                 .First();
+
+        /// <summary>
+        /// 把组内选定的条目整理成最终记录：快捷方式保留 .lnk（带参数），否则用解析后的真实目标。
+        /// </summary>
+        private static InstalledProgramInfo MaterializeProgram(
+            (InstalledProgramInfo Info, string RealTarget) entry,
+            IEnumerable<(InstalledProgramInfo Info, string RealTarget)> iconSourceGroup)
+        {
+            var info = entry.Info;
+            info.TargetPath = IsShortcutSource(info.Source) ? info.TargetPath : entry.RealTarget;
+            info.ResolvedTargetPath ??= entry.RealTarget;
+            info.PreferredIconSourcePath = iconSourceGroup
+                .Where(x => IsShortcutSource(x.Info.Source))
+                .OrderByDescending(x => SourcePriority(x.Info.Source))
+                .Select(x => x.Info.PreferredIconSourcePath)
+                .FirstOrDefault(path => !string.IsNullOrWhiteSpace(path));
+            return info;
+        }
+
+        /// <summary>同 exe 的不同参数变体保留时，在名称后加参数，避免用户看到两个一模一样的名字。</summary>
+        private static string BuildVariantDisplayName(string name, string arguments)
+        {
+            string suffix = (arguments ?? "").Trim();
+            if (suffix.Length > 30) suffix = suffix[..30] + "…";
+            return $"{name} ({suffix})";
+        }
+
+        /// <summary>
+        /// 没有实际含义的启动参数：空参数、安装器的 /run:* 入口、最小化/托盘/后台启动等。
+        /// 这类只保留一条（优先桌面/完整客户端）。
+        /// </summary>
+        public static bool IsBenignLaunchArgument(string? arguments)
+        {
+            string value = (arguments ?? "").Trim();
+            if (value.Length == 0) return true;
+
+            string lower = value.ToLowerInvariant();
+            if (lower.StartsWith("/run:", StringComparison.Ordinal)
+                || lower.StartsWith("-run:", StringComparison.Ordinal)
+                || lower.StartsWith("--run:", StringComparison.Ordinal))
+                return true;
+
+            return lower is "--minimized" or "-minimized" or "/minimized"
+                or "--min" or "-min" or "/min"
+                or "--tray" or "-tray" or "/tray"
+                or "--background" or "-background" or "/background";
+        }
 
         private static bool IsShortcutSource(ProgramSource source)
             => source is ProgramSource.StartMenuUser or ProgramSource.StartMenuCommon

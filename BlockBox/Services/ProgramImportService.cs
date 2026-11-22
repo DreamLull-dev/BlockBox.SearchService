@@ -507,10 +507,11 @@ namespace BlockBox.Services
             return keys;
         }
 
-        /// <summary>按“程序身份”判断是否已存在；无参数的候选还与裸 exe 记录互通，避免快捷方式/注册表互相重复。</summary>
+        /// <summary>按“程序身份”判断是否已存在；无参数/入口类参数的候选还与裸 exe 记录互通，避免快捷方式/注册表互相重复。</summary>
         private static bool ExistsAsProgram(ExistingProgramKeys keys, InstalledProgramInfo program)
             => keys.Identities.Contains(program.Identity)
-                || (program.Arguments.Length == 0
+                || ((program.Arguments.Length == 0
+                        || InstalledProgramScanner.IsBenignLaunchArgument(program.Arguments))
                     && keys.ExeKeys.Contains(ProgramIdentity.ResolveTarget(program.TargetPath)));
 
         private static void Remember(ExistingProgramKeys keys, InstalledProgramInfo program)

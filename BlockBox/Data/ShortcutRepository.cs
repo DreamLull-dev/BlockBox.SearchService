@@ -1155,14 +1155,24 @@ namespace BlockBox.Data
         public static bool ExistsInCategory(string categoryId, AppMode mode, string targetPath)
         {
             string identity = BlockBox.Helpers.ProgramIdentity.Get(targetPath);
+            string exeKey = BlockBox.Helpers.ProgramIdentity.ResolveTarget(targetPath);
+            var shortcutInfo = BlockBox.Services.InstalledProgramScanner.ResolveShortcutInfo(targetPath);
+            bool benignArguments = shortcutInfo == null
+                || BlockBox.Services.InstalledProgramScanner.IsBenignLaunchArgument(shortcutInfo.Arguments);
+
             var rows = CategoryRepository.IsShared(categoryId)
                 ? GetSharedByCategory(categoryId)
                 : GetByCategory(mode, categoryId);
 
             return rows.Any(item => string.Equals(
-                BlockBox.Helpers.ProgramIdentity.Get(item.TargetPath, item.Arguments),
-                identity,
-                StringComparison.Ordinal));
+                    BlockBox.Helpers.ProgramIdentity.Get(item.TargetPath, item.Arguments),
+                    identity,
+                    StringComparison.Ordinal)
+                || (benignArguments
+                    && string.Equals(
+                        BlockBox.Helpers.ProgramIdentity.ResolveTarget(item.TargetPath),
+                        exeKey,
+                        StringComparison.OrdinalIgnoreCase)));
         }
         /// <summary>
         /// 批量更新 SortOrder（拖拽排序后调用）
