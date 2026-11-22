@@ -375,11 +375,7 @@ namespace BlockBox
             _trayIcon.SettingsRequested += TrayIcon_SettingsRequested;
             _trayIcon.ContextMenuRequested += TrayIcon_ContextMenuRequested;
             _trayIcon.MinimizedRequested += MainWindow_MinimizedRequested;
-            _trayIcon.ExitRequested += (_, _) =>
-            {
-                _allowWindowClose = true;
-                Application.Current.Exit();
-            };
+            _trayIcon.ExitRequested += (_, _) => ExitApplicationCompletely();
             _trayIcon.Initialize();
             Closed += (_, _) =>
             {
@@ -1132,10 +1128,37 @@ namespace BlockBox
             _ = LoadThumbnailAsync(e.Shortcut, e.Icon, e.Image, path, cacheKey);
         }
 
-        private void MenuExitApp_Click(object sender, RoutedEventArgs e)
+        private void MenuExitApp_Click(object sender, RoutedEventArgs e) => ExitApplicationCompletely();
+
+        /// <summary>
+        /// 退出应用：先关掉所有独立窗口（搜索、回收站、视图管理等），再退出。
+        /// 只调用 Application.Exit() 在 WinUI 3 下不会关闭这些次级窗口。
+        /// </summary>
+        private void ExitApplicationCompletely()
         {
             _allowWindowClose = true;
+            _deferredShellClose = false;
+
+            CloseAuxiliaryWindow(_globalSearchWindow);
+            _globalSearchWindow = null;
+            CloseAuxiliaryWindow(_recycleBinWindow);
+            _recycleBinWindow = null;
+            CloseAuxiliaryWindow(_viewManagementWindow);
+            _viewManagementWindow = null;
+
             Application.Current.Exit();
+        }
+
+        private static void CloseAuxiliaryWindow(Window? window)
+        {
+            try
+            {
+                window?.Close();
+            }
+            catch
+            {
+                // 窗口可能已经在关闭过程中，忽略。
+            }
         }
 
         private void MenuHideToTray_Click(object sender, RoutedEventArgs e)
@@ -2943,8 +2966,7 @@ namespace BlockBox
                         _trayIcon?.Hide();
                         break;
                     case TrayMenuAction.Exit:
-                        _allowWindowClose = true;
-                        Application.Current.Exit();
+                        ExitApplicationCompletely();
                         break;
                 }
             }
