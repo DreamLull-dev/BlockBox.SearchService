@@ -110,6 +110,8 @@ namespace BlockBox
         private bool _deferredShellClose;
         private TrayIconService? _trayIcon;
         private bool _trayMenuOpen;
+        private bool _fontFamilyApplied;
+        private string? _appliedFontFamilyName;
         private RecycleBinWindow? _recycleBinWindow;
         private ViewManagementWindow? _viewManagementWindow;
         private GlobalSearchWindow? _globalSearchWindow;
@@ -1817,59 +1819,107 @@ namespace BlockBox
         /// <summary>
         /// 在启动窗体仍可见时预解码全部“全部应用”分类的图标，主窗体打开后可直接显示。
         /// </summary>
-        public async Task<int> PreloadAllApplicationIconsAsync(IProgress<string>? progress = null)
+        public async Task<int> PreloadAllApplicationIconsAsync(IProgress<string>? progress = null, int maxCount = int.MaxValue)
         {
-            var shortcuts = ModeRepository.GetAllModes()
-                .SelectMany(mode => BlockBox.Data.CategoryRepository.GetVisible(mode)
-                    .Where(category => string.Equals(category.Name, "全部应用", StringComparison.OrdinalIgnoreCase)
-                        && !category.IsSeparator)
-                    .SelectMany(category => BlockBox.Data.ShortcutRepository.GetByCategory(mode, category.Id)))
-                .GroupBy(item => item.Id, StringComparer.OrdinalIgnoreCase)
-                .Select(group => group.First())
-                .ToList();
-            BlockBox.Helpers.StartupLog.Step($"图标预载: 共 {shortcuts.Count} 个快捷方式");
+            var ordered = GetPreloadIconOrder();
+            int limit = Math.Min(maxCount, ordered.Count);
+            BlockBox.Helpers.StartupLog.Step($"首屏图标预载: 共 {limit} 个（全部 {ordered.Count} 个）");
 
             int loaded = 0;
-            for (int i = 0; i < shortcuts.Count; i++)
+            for (int i = 0; i < limit; i++)
             {
-                var item = shortcuts[i];
-                string? path = !string.IsNullOrWhiteSpace(item.IconPath)
-                    && System.IO.File.Exists(item.IconPath)
-                    ? item.IconPath
-                    : null;
-                if (!string.IsNullOrWhiteSpace(path))
-                {
-                    string key = BuildThumbnailImageCacheKey(path, 96);
-                    if (!_thumbnailImageCache.ContainsKey(key))
-                    {
-                        try
-                        {
-                            byte[] png = await File.ReadAllBytesAsync(path);
-                            png = TrimTransparentPng(png);
+                if (await TryPreloadShortcutIconAsync(ordered[i]))
+                    loaded++;
 
-                            if (png is { Length: > 0 })
-                            {
-                                png = TrimTransparentPng(png);
-                                var bitmap = await CreateBitmapFromPngAsync(png);
-                                if (bitmap != null)
-                                {
-                                    _thumbnailImageCache[key] = bitmap;
-                                    loaded++;
-                                }
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            System.Diagnostics.Debug.WriteLine($"[启动图标预载] {item.Name}: {ex.Message}");
-                        }
-                    }
-                }
-
-                if ((i + 1) % 10 == 0 || i + 1 == shortcuts.Count)
-                    progress?.Report($"正在预载全部应用图标（{i + 1}/{shortcuts.Count}）...");
+                if ((i + 1) % 8 == 0 || i + 1 == limit)
+                    progress?.Report($"正在预载首屏图标（{i + 1}/{limit}）...");
             }
 
             return loaded;
+        }
+
+        /// <summary>
+        /// 主窗体显示后，后台继续补齐剩余图标；已缓存的会直接跳过。
+        /// </summary>
+        public async Task PreloadRemainingApplicationIconsAsync()
+        {
+            try
+            {
+                foreach (var item in GetPreloadIconOrder())
+                {
+                    if (_allowWindowClose || _closeAnimationStarted)
+                        return;
+
+                    await TryPreloadShortcutIconAsync(item);
+
+                    // 让出 UI 线程，保证主界面交互不被图标解码拖住。
+                    await Task.Yield();
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[启动图标预载] 后台预载失败: {ex.Message}");
+            }
+        }
+
+        /// <summary>先当前视图里可见的条目，再补全部应用里的其余条目。</summary>
+        private List<ShortcutItem> GetPreloadIconOrder()
+        {
+            var ordered = new List<ShortcutItem>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            void AddRange(IEnumerable<ShortcutItem> items)
+            {
+                foreach (var item in items)
+                {
+                    if (!string.IsNullOrEmpty(item.Id) && seen.Add(item.Id))
+                        ordered.Add(item);
+                }
+            }
+
+            AddRange(CurrentShortcuts.ToList());
+            AddRange(ModeRepository.GetAllModes()
+                .SelectMany(mode => BlockBox.Data.CategoryRepository.GetVisible(mode)
+                    .Where(category => string.Equals(category.Name, "全部应用", StringComparison.OrdinalIgnoreCase)
+                        && !category.IsSeparator)
+                    .SelectMany(category => BlockBox.Data.ShortcutRepository.GetByCategory(mode, category.Id))));
+
+            return ordered;
+        }
+
+        private async Task<bool> TryPreloadShortcutIconAsync(ShortcutItem item)
+        {
+            string? path = !string.IsNullOrWhiteSpace(item.IconPath)
+                && System.IO.File.Exists(item.IconPath)
+                ? item.IconPath
+                : null;
+            if (string.IsNullOrWhiteSpace(path))
+                return false;
+
+            string key = BuildThumbnailImageCacheKey(path, 96);
+            if (_thumbnailImageCache.ContainsKey(key))
+                return false;
+
+            try
+            {
+                byte[] png = await File.ReadAllBytesAsync(path);
+                png = TrimTransparentPng(png);
+                if (png is not { Length: > 0 })
+                    return false;
+
+                png = TrimTransparentPng(png);
+                var bitmap = await CreateBitmapFromPngAsync(png);
+                if (bitmap == null)
+                    return false;
+
+                _thumbnailImageCache[key] = bitmap;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[启动图标预载] {item.Name}: {ex.Message}");
+                return false;
+            }
         }
 
         private static async Task<Microsoft.UI.Xaml.Media.Imaging.BitmapImage?> CreateBitmapFromPngAsync(byte[] png)
@@ -2907,6 +2957,11 @@ namespace BlockBox
 
         private void SettingsViewControl_Loaded(object sender, RoutedEventArgs e)
         {
+            // 启动时构造函数已经 ApplySettings 过一次，这里只在设置页真正可见时补刷，
+            // 避免启动阶段重复遍历整棵视觉树。
+            if (!_isSettingsVisible)
+                return;
+
             DispatcherQueue.TryEnqueue(
                 Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
                 () =>
@@ -3034,6 +3089,16 @@ namespace BlockBox
         }
         private void ApplyGlobalFontFamily(string? fontFamilyName)
         {
+            fontFamilyName = string.IsNullOrWhiteSpace(fontFamilyName) ? null : fontFamilyName.Trim();
+            if (_fontFamilyApplied
+                && string.Equals(_appliedFontFamilyName, fontFamilyName, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            _fontFamilyApplied = true;
+            _appliedFontFamilyName = fontFamilyName;
+
             FontFamily fontFamily;
 
             if (string.IsNullOrWhiteSpace(fontFamilyName))
@@ -3599,7 +3664,7 @@ namespace BlockBox
                 // 稍微延迟，等 UI 稳下来
                 // Wait for either the startup grace period or shutdown without
                 // canceling Task.Delay (which throws TaskCanceledException).
-                if (!await DelayUnlessCanceledAsync(TimeSpan.FromMilliseconds(1500), ct))
+                if (!await DelayUnlessCanceledAsync(TimeSpan.FromMilliseconds(5000), ct))
                     return;
                 if (ct.IsCancellationRequested)
                     return;

@@ -104,19 +104,17 @@ namespace BlockBox
                 ini.WriteValue("Storage", "SchemaVersion", "5");
             }
 
-            // ⭐ 先初始化数据库
-            StartupLog.Step("开始 DatabaseContext.Initialize");
-            BlockBox.Data.DatabaseContext.Initialize();
+            // ⭐ 先初始化数据库（放后台线程，避免阻塞启动窗口动画）
+            StartupLog.Step("开始 DatabaseContext.Initialize（后台线程）");
+            await Task.Run(() =>
+            {
+                BlockBox.Data.DatabaseContext.Initialize();
+                BlockBox.Services.ContentFolderInitializer.EnsureRootFolders();
+
+                // 标签清理必须在主窗体读取导航之前完成。
+                BlockBox.Data.TabRepository.CleanEmptyDefaultTabs();
+            });
             StartupLog.Step("DatabaseContext.Initialize 完成");
-            BlockBox.Services.ContentFolderInitializer.EnsureRootFolders();  // ⭐
-            StartupLog.Step("EnsureRootFolders 完成");
-            BlockBox.Services.BackupService.CleanExpiredDeletedFolders();       // ⭐ 清理 7 天前的
-            StartupLog.Step("CleanExpiredDeletedFolders 完成");
-            BlockBox.Services.BackupService.CleanExpiredExternalDragStagingDirectories();
-            StartupLog.Step("CleanExpiredExternalDragStagingDirectories 完成");
-                                                                                // ⭐ 清理空的默认标签
-            BlockBox.Data.TabRepository.CleanEmptyDefaultTabs();
-            StartupLog.Step("CleanEmptyDefaultTabs 完成");
             if (int.TryParse(
                     ini.ReadValue("System", "FontSizeStep", string.Empty),
                     System.Globalization.NumberStyles.Integer,
@@ -185,11 +183,29 @@ namespace BlockBox
             var mainWindow = new MainWindow();
             StartupLog.Step("new MainWindow 完成");
             MainWindow = mainWindow;
-            await mainWindow.PreloadAllApplicationIconsAsync(iconProgress);
-            StartupLog.Step("预载应用图标完成");
+            await mainWindow.PreloadAllApplicationIconsAsync(iconProgress, maxCount: 32);
+            StartupLog.Step("预载首屏图标完成");
             MainWindow.Activate();
             StartupLog.Step("主窗口已激活");
+
+            // 备份目录清理与界面无关，放到主窗口显示之后再跑。
+            _ = Task.Run(() =>
+            {
+                try
+                {
+                    BlockBox.Services.BackupService.CleanExpiredDeletedFolders();
+                    BlockBox.Services.BackupService.CleanExpiredExternalDragStagingDirectories();
+                    StartupLog.Step("后台备份清理完成");
+                }
+                catch (Exception ex)
+                {
+                    StartupLog.Error("后台备份清理", ex);
+                }
+            });
+
             await startupWindow.FadeOutAsync();
+            // 启动窗口淡出后再补其余图标，避免和主界面淡入抢 UI 线程。
+            _ = mainWindow.PreloadRemainingApplicationIconsAsync();
             StartupLog.Step("启动窗口已淡出");
             if (ini.ReadBool("System", "OpenSearchOnStartup", SettingsDefaults.OpenSearchOnStartup))
             {

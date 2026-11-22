@@ -37,6 +37,12 @@ namespace BlockBox.Helpers
                     return;
                 }
 
+                // 状态已经符合要求就不再调用，避免每次启动都走一遍系统接口。
+                if (enabled && task.State == StartupTaskState.Enabled)
+                    return;
+                if (!enabled && task.State == StartupTaskState.Disabled)
+                    return;
+
                 if (enabled)
                 {
                     StartupTaskState state = await task.RequestEnableAsync();
