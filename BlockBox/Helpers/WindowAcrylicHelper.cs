@@ -19,14 +19,16 @@ namespace BlockBox.Helpers
         private sealed class BackdropLifetime
         {
             private readonly Window _window;
+            private readonly bool _applyTextColors;
             private DesktopAcrylicController? _controller;
             private readonly SystemBackdropConfiguration _configuration;
             private Color _tint = Color.FromArgb(255, 36, 74, 128);
             private bool _isClosed;
 
-            public BackdropLifetime(Window window)
+            public BackdropLifetime(Window window, bool applyTextColors = true)
             {
                 _window = window;
+                _applyTextColors = applyTextColors;
                 _configuration = new SystemBackdropConfiguration { IsInputActive = true };
                 window.Activated += OnActivated;
                 window.Closed += OnClosed;
@@ -77,6 +79,7 @@ namespace BlockBox.Helpers
 
             private void ApplyTextColors(Color tint)
             {
+                if (!_applyTextColors) return;
                 try
                 {
                     if (_window.Content is DependencyObject root)
@@ -130,7 +133,15 @@ namespace BlockBox.Helpers
         private static readonly object SyncRoot = new();
         private static readonly List<WeakReference<BackdropLifetime>> ActiveLifetimes = new();
 
-        public static void Apply(Window window)
+        public static void Apply(Window window) => ApplyCore(window, applyTextColors: true);
+
+        /// <summary>
+        /// 只套亚克力背景，不把全局字体色刷到窗口内容上。
+        /// 适合固定使用深色文字的弹窗（例如托盘菜单）。
+        /// </summary>
+        public static void ApplyBackdropOnly(Window window) => ApplyCore(window, applyTextColors: false);
+
+        private static void ApplyCore(Window window, bool applyTextColors)
         {
             Color tint = Color.FromArgb(255, 36, 74, 128);
             if (Application.Current.Resources.TryGetValue("AppPrimaryBackgroundBrush", out object value)
@@ -138,7 +149,7 @@ namespace BlockBox.Helpers
                 tint = brush.Color;
             var lifetime = Lifetimes.GetValue(window, key =>
             {
-                var created = new BackdropLifetime(key);
+                var created = new BackdropLifetime(key, applyTextColors);
                 lock (SyncRoot) ActiveLifetimes.Add(new WeakReference<BackdropLifetime>(created));
                 return created;
             });

@@ -25,8 +25,8 @@
         </Grid.Resources>
         <Border x:Name="MenuBorder"
                 CornerRadius="8"
-                Background="#F9FFFFFF"
-                BorderBrush="#22000000"
+                Background="{ThemeResource AcrylicInAppFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
                 BorderThickness="1"
                 Padding="4">
             <StackPanel Spacing="0">
