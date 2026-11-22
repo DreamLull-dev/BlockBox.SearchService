@@ -2106,6 +2106,19 @@ namespace BlockBox
         UpdateTitleBarDragRegions);
 
             WindowFadeController.FadeIn(this);
+
+            // 最终补刷一次：分类项、标签、快捷方式卡片等模板要等布局/首帧之后才真正创建，
+            // 前面两次 ApplySettings 可能覆盖不到。延迟一点再套一次颜色，避免“打开设置后才正确”。
+            DispatcherQueue.TryEnqueue(
+                Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
+                async () =>
+                {
+                    await Task.Delay(350);
+                    if (_closeAnimationStarted || _allowWindowClose)
+                        return;
+
+                    ApplySettings(reloadNavigation: false, reloadBackgrounds: false);
+                });
         }
         public void ShowGlobalSearchWindow()
         {
