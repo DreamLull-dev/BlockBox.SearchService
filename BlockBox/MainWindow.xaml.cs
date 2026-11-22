@@ -2113,7 +2113,7 @@ namespace BlockBox
                 Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
                 async () =>
                 {
-                    await Task.Delay(350);
+                    await Task.Delay(150);
                     if (_closeAnimationStarted || _allowWindowClose)
                         return;
 
@@ -10219,6 +10219,26 @@ namespace BlockBox
             ApplyTabForeground(tabBarTextColor, selectedTabTextColor);
 
             ApplyToastColors();
+
+            // 搜索框、标签栏右侧按钮、展开按钮：它们位于 TabBarGrid 之外或模板较晚创建，
+            // 容易在第一遍遍历时漏掉。这里用标签栏文字色再补一次，保证首次启动就正确。
+            TextColorHelper.ApplyForegroundToTree(
+                SearchBoxBorder,
+                tabBarTextColor,
+                globalAdjust,
+                sharedColor);
+            TextColorHelper.ApplyForegroundToTree(
+                TabBarRightHost,
+                tabBarTextColor,
+                globalAdjust,
+                sharedColor);
+            TextColorHelper.ApplyForegroundToTree(
+                ExpandButton,
+                tabBarTextColor,
+                globalAdjust,
+                sharedColor);
+            SearchBox.Foreground = tabBarTextBrush;
+            SearchBox.PlaceholderForeground = tabBarTextBrush;
         }
         private async void ReloadSettings_Click(object sender, RoutedEventArgs e)
         {
