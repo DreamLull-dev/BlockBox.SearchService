@@ -134,9 +134,10 @@ namespace BlockBox.Helpers
                 or VirtualKey.Divide or VirtualKey.Decimal;
         }
 
-        /// <summary>设置页的合法手势规则：必须有修饰键；无修饰键时只允许功能键和导航键。</summary>
+        /// <summary>设置页的合法手势规则：必须有修饰键；无修饰键时只允许功能键和导航键；禁止 Win 键。</summary>
         public static bool IsValidGesture(VirtualKey key, VirtualKeyModifiers modifiers)
         {
+            if ((modifiers & VirtualKeyModifiers.Windows) != 0) return false;
             if (!IsSupportedKey(key)) return false;
             if (modifiers != VirtualKeyModifiers.None) return true;
             return key is >= VirtualKey.F1 and <= VirtualKey.F24
@@ -144,6 +145,11 @@ namespace BlockBox.Helpers
                 or VirtualKey.Home or VirtualKey.End
                 or VirtualKey.PageUp or VirtualKey.PageDown;
         }
+
+        /// <summary>解析后是否带 Win 修饰键（用于清理旧配置里不允许的组合）。</summary>
+        public static bool HasWindowsModifier(string text)
+            => TryParse(text, out _, out VirtualKeyModifiers modifiers)
+                && (modifiers & VirtualKeyModifiers.Windows) != 0;
 
         public static string FormatModifiers(VirtualKeyModifiers modifiers)
         {

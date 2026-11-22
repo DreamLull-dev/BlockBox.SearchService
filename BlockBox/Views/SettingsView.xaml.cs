@@ -728,7 +728,13 @@ namespace BlockBox.Views
         }
 
         private string Read(string section, string key, string fallback) => _ini?.ReadValue(section, key, fallback) ?? fallback;
-        private string ReadHotkey(string key, string fallback) => HotkeyGesture.Normalize(Read("Hotkeys", key, fallback));
+        private string ReadHotkey(string key, string fallback)
+        {
+            string value = Read("Hotkeys", key, fallback);
+            // 旧配置里可能存了 Win 组合：直接回退到默认手势。
+            if (HotkeyGesture.HasWindowsModifier(value)) value = fallback;
+            return HotkeyGesture.Normalize(value);
+        }
         private int ReadInt(string section, string key, int fallback) => int.TryParse(Read(section, key, fallback.ToString()), out var value) ? value : fallback;
         private static int ClampComboBoxIndex(ComboBox comboBox, int index)
             => comboBox.Items.Count == 0 ? -1 : Math.Clamp(index, 0, comboBox.Items.Count - 1);
@@ -916,6 +922,14 @@ namespace BlockBox.Views
 
             if (IsModifierKey(e.Key))
             {
+                // Win 键组合一律不允许（避免和系统快捷键冲突）。
+                if ((keyModifiers & Windows.System.VirtualKeyModifiers.Windows) != 0)
+                {
+                    textBox.Text = LanguageService.Translate("快捷键不能包含 Win 键");
+                    TraceHotkey("WindowsModifierRejected", textBox);
+                    return;
+                }
+
                 string modifierHint = FormatModifiers(keyModifiers);
                 textBox.Text = string.IsNullOrEmpty(modifierHint) ? LanguageService.Translate("请按下按键") : modifierHint + "+...";
                 TraceHotkey("ModifierRecorded", textBox, $"modifiers={keyModifiers}");
@@ -933,6 +947,12 @@ namespace BlockBox.Views
 
             if (!IsValidHotkey(e.Key, keyModifiers))
             {
+                // 给出原因，而不是按下后毫无反应。
+                textBox.Text = (keyModifiers & Windows.System.VirtualKeyModifiers.Windows) != 0
+                    ? LanguageService.Translate("快捷键不能包含 Win 键")
+                    : HotkeyGesture.IsSupportedKey(e.Key)
+                        ? LanguageService.Translate("请配合 Ctrl、Alt 或 Shift 使用")
+                        : LanguageService.Translate("不支持的按键");
                 TraceHotkey("InvalidHotkey", textBox, $"key={e.Key}; modifiers={keyModifiers}");
                 return;
             }

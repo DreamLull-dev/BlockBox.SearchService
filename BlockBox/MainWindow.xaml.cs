@@ -3253,6 +3253,8 @@ namespace BlockBox
                 string gesture = _ini.ReadValue("Hotkeys", binding.Key, binding.Gesture);
                 if (!TryParseKeyboardGesture(gesture, out var key, out var modifiers))
                     continue;
+                if ((modifiers & Windows.System.VirtualKeyModifiers.Windows) != 0)
+                    continue;   // 不允许 Win 组合
 
                 // 旧配置里可能存在重复手势：只注册第一个，避免同一次按键触发多个动作。
                 if (!seenGestures.Add((key, modifiers)))
