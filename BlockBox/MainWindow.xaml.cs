@@ -112,6 +112,7 @@ namespace BlockBox
         private bool _trayMenuOpen;
         private bool _fontFamilyApplied;
         private string? _appliedFontFamilyName;
+        private string? _appliedLanguageCode;
         private RecycleBinWindow? _recycleBinWindow;
         private ViewManagementWindow? _viewManagementWindow;
         private GlobalSearchWindow? _globalSearchWindow;
@@ -2957,11 +2958,9 @@ namespace BlockBox
 
         private void SettingsViewControl_Loaded(object sender, RoutedEventArgs e)
         {
-            // 启动时构造函数已经 ApplySettings 过一次，这里只在设置页真正可见时补刷，
-            // 避免启动阶段重复遍历整棵视觉树。
-            if (!_isSettingsVisible)
-                return;
-
+            // 构造函数里的 ApplySettings 执行时，部分模板（分类容器、设置页控件等）还没创建；
+            // 内容真正 Loaded 后需要再刷一次，字体色/背景色才会正确落到这些控件上。
+            // 为了让这次补刷尽量便宜，ApplyGlobalFontFamily / ApplyCurrentLanguage 都做了同值跳过。
             DispatcherQueue.TryEnqueue(
                 Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
                 () =>
@@ -3474,11 +3473,17 @@ namespace BlockBox
 
             string languageCode = requestedLanguageCode ?? LanguageService.CurrentLanguageCode;
 
-            LanguageService.ApplyLanguage(Content as DependencyObject, languageCode);
-            LanguageService.ApplyMenuFlyout(FileMenuFlyout, languageCode);
-            LanguageService.ApplyMenuFlyout(EditMenuFlyout, languageCode);
-            LanguageService.ApplyMenuFlyout(ViewMenuFlyout, languageCode);
-            LanguageService.ApplyMenuFlyout(HelpMenuFlyout, languageCode);
+            bool languageChanged = !string.Equals(_appliedLanguageCode, languageCode, StringComparison.OrdinalIgnoreCase);
+            if (languageChanged)
+            {
+                _appliedLanguageCode = languageCode;
+                LanguageService.ApplyLanguage(Content as DependencyObject, languageCode);
+                LanguageService.ApplyMenuFlyout(FileMenuFlyout, languageCode);
+                LanguageService.ApplyMenuFlyout(EditMenuFlyout, languageCode);
+                LanguageService.ApplyMenuFlyout(ViewMenuFlyout, languageCode);
+                LanguageService.ApplyMenuFlyout(HelpMenuFlyout, languageCode);
+            }
+
             foreach (var category in Categories)
                 category.RefreshLocalizedProperties();
             foreach (var tab in TabItems)
@@ -3491,7 +3496,7 @@ namespace BlockBox
                 if (_closeAnimationStarted || _allowWindowClose)
                     return;
 
-                if (SettingsViewControl.IsLoaded)
+                if (languageChanged && SettingsViewControl.IsLoaded)
                     LanguageService.ApplyLanguage(SettingsViewControl, languageCode);
                 RefreshNavigationLocalizedTexts();
             });
