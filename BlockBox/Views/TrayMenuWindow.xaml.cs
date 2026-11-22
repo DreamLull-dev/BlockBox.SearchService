@@ -2,6 +2,7 @@ using BlockBox.Helpers;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using System;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
@@ -44,6 +45,7 @@ namespace BlockBox.Views
             WindowAcrylicHelper.ApplyBackdropOnly(this);
             ModalWindowHelper.ConfigureBorderlessWindow(this);
             WindowFadeController.Prepare(this);
+            ApplyThemeHoverResources();
 
             var hwnd = WindowNative.GetWindowHandle(this);
             // 托盘菜单不进任务栏/Alt-Tab。
@@ -63,6 +65,27 @@ namespace BlockBox.Views
         }
 
         public Task<TrayMenuAction?> Result => _result.Task;
+
+        private void ApplyThemeHoverResources()
+        {
+            try
+            {
+                if (Application.Current.Resources.TryGetValue("AppPrimaryBackgroundBrush", out object value)
+                    && value is SolidColorBrush primary)
+                {
+                    // 用主题色的半透明版本做悬浮/按下背景：既体现主题色，又保证深色文字可读。
+                    Windows.UI.Color color = primary.Color;
+                    RootGrid.Resources["ButtonBackgroundPointerOver"] =
+                        new SolidColorBrush(Windows.UI.Color.FromArgb(0x40, color.R, color.G, color.B));
+                    RootGrid.Resources["ButtonBackgroundPressed"] =
+                        new SolidColorBrush(Windows.UI.Color.FromArgb(0x66, color.R, color.G, color.B));
+                }
+            }
+            catch
+            {
+                // 取不到主题色就保留默认悬浮效果。
+            }
+        }
 
         private void RootGrid_Loaded(object sender, RoutedEventArgs e)
         {
