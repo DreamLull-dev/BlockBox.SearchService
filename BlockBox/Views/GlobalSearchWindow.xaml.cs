@@ -203,35 +203,80 @@ namespace BlockBox.Views
             var bounds = main.AppWindow.Position;
             var size = main.AppWindow.Size;
             const int width = 380;
-            // 主窗体收在托盘里（不可见）时，系统给的尺寸/坐标可能是最小化后的占位值（例如 -32000），
-            // 继续按“贴在它右侧”算会把面板推到屏幕外。高度不合法时退回主窗体的默认高度。
-            bool mainVisible = main.AppWindow.IsVisible;
-            int height = size.Height >= 320 ? size.Height : 580;
+            const int defaultHeight = 580;
+            int height = size.Height >= 320 ? size.Height : defaultHeight;
             AppWindow.Resize(new SizeInt32(width, height));
 
-            int x = bounds.X + size.Width;
-            int y = bounds.Y;
-            // 默认贴在主窗体右侧；主窗体不可见（托盘“显示全局搜索”）时改为贴它所在显示器的右边，
-            // 两种情况下都把面板钳回工作区，纵向也保证不出屏。
-            var display = mainVisible
-                ? DisplayArea.GetFromPoint(
-                      new PointInt32(bounds.X + size.Width / 2, bounds.Y + size.Height / 2),
-                      DisplayAreaFallback.Primary)
-                  ?? DisplayArea.GetFromWindowId(main.AppWindow.Id, DisplayAreaFallback.Primary)
-                : DisplayArea.GetFromWindowId(main.AppWindow.Id, DisplayAreaFallback.Primary);
+            // 最小化时 AppWindow.IsVisible 仍可能为 true，且 Position 会是 -32000 之类的占位值，
+            // 必须单独判断，否则会按“贴在主窗体右侧”算到屏幕左上角。
+            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(main);
+            bool minimized = IsIconic(hwnd) || bounds.X <= -10000 || bounds.Y <= -10000;
+            bool mainVisible = main.AppWindow.IsVisible && !minimized;
+
+            DisplayArea? display;
+            int x;
+            int y;
+
+            if (mainVisible)
+            {
+                display = DisplayArea.GetFromPoint(
+                              new PointInt32(bounds.X + size.Width / 2, bounds.Y + size.Height / 2),
+                              DisplayAreaFallback.Primary)
+                          ?? DisplayArea.GetFromWindowId(main.AppWindow.Id, DisplayAreaFallback.Primary);
+
+                x = bounds.X + size.Width;
+                y = bounds.Y;
+            }
+            else
+            {
+                // 主窗体最小化 / 收在托盘：在鼠标所在显示器上居中显示。
+                display = GetCursorDisplay(main);
+                var work = display?.WorkArea;
+                x = work is null ? 0 : work.Value.X + (work.Value.Width - width) / 2;
+                y = work is null ? 0 : work.Value.Y + (work.Value.Height - height) / 2;
+            }
+
             if (display is not null)
             {
                 var work = display.WorkArea;
-                if (!mainVisible)
-                {
-                    x = work.X + work.Width - width - 16;
-                    y = work.Y + Math.Max(16, work.Height / 6);
-                }
                 x = Math.Clamp(x, work.X, Math.Max(work.X, work.X + work.Width - width));
                 y = Math.Clamp(y, work.Y, Math.Max(work.Y, work.Y + work.Height - height));
             }
+
             AppWindow.Move(new PointInt32(x, y));
         }
+
+        private static DisplayArea? GetCursorDisplay(Window main)
+        {
+            try
+            {
+                if (GetCursorPos(out POINT point))
+                {
+                    return DisplayArea.GetFromPoint(
+                        new PointInt32(point.X, point.Y),
+                        DisplayAreaFallback.Primary);
+                }
+            }
+            catch
+            {
+                // 取不到鼠标位置就退回主窗体所在显示器。
+            }
+
+            return DisplayArea.GetFromWindowId(main.AppWindow.Id, DisplayAreaFallback.Primary);
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct POINT
+        {
+            public int X;
+            public int Y;
+        }
+
+        [DllImport("user32.dll")]
+        private static extern bool GetCursorPos(out POINT point);
+
+        [DllImport("user32.dll")]
+        private static extern bool IsIconic(IntPtr hwnd);
 
         public void ShowBesideMainWindow()
         {

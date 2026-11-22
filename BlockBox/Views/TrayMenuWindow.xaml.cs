@@ -25,12 +25,15 @@ namespace BlockBox.Views
     public sealed partial class TrayMenuWindow : Window
     {
         private const int WidthDip = 236;
-        private const int HeightDip = 206;
+        private const int ProvisionalHeightDip = 260;
 
         private readonly TaskCompletionSource<TrayMenuAction?> _result = new();
         private TrayMenuAction? _pending;
         private bool _closing;
         private bool _activatedOnce;
+        private int _screenX;
+        private int _screenY;
+        private double _scale = 1.0;
 
         public TrayMenuWindow(int screenX, int screenY)
         {
@@ -48,15 +51,12 @@ namespace BlockBox.Views
             int extendedStyle = GetWindowLong(hwnd, GwlExStyle);
             SetWindowLong(hwnd, GwlExStyle, extendedStyle | WsExToolWindow);
             double scale = Math.Max(1.0, GetDpiForWindow(hwnd) / 96.0);
-            int width = (int)(WidthDip * scale);
-            int height = (int)(HeightDip * scale);
+            _screenX = screenX;
+            _screenY = screenY;
+            _scale = scale;
 
-            // 菜单底边贴住鼠标，向左上方展开，并夹在工作区内。
-            var work = DisplayArea.GetFromPoint(new PointInt32(screenX, screenY), DisplayAreaFallback.Nearest).WorkArea;
-            int left = Math.Clamp(screenX - width / 8, work.X, Math.Max(work.X, work.X + work.Width - width));
-            int top = Math.Clamp(screenY - height, work.Y, Math.Max(work.Y, work.Y + work.Height - height));
-
-            AppWindow.MoveAndResize(new RectInt32(left, top, width, height));
+            // 先给一个足够高的临时尺寸；Loaded 时再按实际内容高度收缩，避免底部文字被裁。
+            MoveMenu((int)(WidthDip * scale), (int)(ProvisionalHeightDip * scale));
 
             Activated += TrayMenuWindow_Activated;
             Closed += (_, _) => _result.TrySetResult(_pending);
@@ -66,8 +66,24 @@ namespace BlockBox.Views
 
         private void RootGrid_Loaded(object sender, RoutedEventArgs e)
         {
+            // 按实际内容高度收缩窗口（Border 顶部对齐，实际高度就是内容高度）。
+            double contentHeight = MenuBorder.ActualHeight
+                                   + RootGrid.Padding.Top
+                                   + RootGrid.Padding.Bottom;
+            int height = (int)(Math.Max(120, contentHeight) * _scale);
+            MoveMenu((int)(WidthDip * _scale), height);
+
             WindowFadeController.FadeAndScaleIn(this, RootGrid);
             ShowButton.Focus(FocusState.Programmatic);
+        }
+
+        private void MoveMenu(int width, int height)
+        {
+            var work = DisplayArea.GetFromPoint(
+                new PointInt32(_screenX, _screenY), DisplayAreaFallback.Nearest).WorkArea;
+            int left = Math.Clamp(_screenX - width / 8, work.X, Math.Max(work.X, work.X + work.Width - width));
+            int top = Math.Clamp(_screenY - height, work.Y, Math.Max(work.Y, work.Y + work.Height - height));
+            AppWindow.MoveAndResize(new RectInt32(left, top, width, height));
         }
 
         private void TrayMenuWindow_Activated(object sender, WindowActivatedEventArgs e)

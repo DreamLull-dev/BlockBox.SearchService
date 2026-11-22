@@ -24,6 +24,7 @@
             </Style>
         </Grid.Resources>
         <Border x:Name="MenuBorder"
+                VerticalAlignment="Top"
                 CornerRadius="8"
                 Background="{ThemeResource AcrylicInAppFillColorDefaultBrush}"
                 BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
