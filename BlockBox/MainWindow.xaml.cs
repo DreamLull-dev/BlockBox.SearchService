@@ -1926,14 +1926,23 @@ namespace BlockBox
 
                 var msgs = new List<string>
         {
-            LanguageService.TranslateFormat("扫描 {count} 个程序", ("{count}", result.Scanned)),
+            LanguageService.TranslateFormat(
+                "扫描 {count} 个程序（开始菜单 {start} / 桌面 {desktop} / 注册表 {registry} / App Paths {apppaths} / 商店 {store}）",
+                ("{count}", result.Scanned),
+                ("{start}", result.SourceStartMenu),
+                ("{desktop}", result.SourceDesktop),
+                ("{registry}", result.SourceRegistry),
+                ("{apppaths}", result.SourceAppPath),
+                ("{store}", result.SourceStore)),
             LanguageService.TranslateFormat("全部应用 +{count}", ("{count}", result.AddedAllApps)),
             LanguageService.TranslateFormat("游戏 +{count}", ("{count}", result.AddedGame)),
             LanguageService.TranslateFormat("办公 +{count}", ("{count}", result.AddedOffice)),
             LanguageService.TranslateFormat("音乐 +{count}", ("{count}", result.AddedMusic)),
             LanguageService.TranslateFormat("用户分类记录匹配 {count} 个程序", ("{count}", result.FromUserHistory)),
             LanguageService.TranslateFormat("自动分类规则匹配 {count} 个程序", ("{count}", result.FromBuiltInRules)),
-            LanguageService.TranslateFormat("跳过 {count}", ("{count}", result.Skipped))
+            LanguageService.TranslateFormat("重复跳过 {count}", ("{count}", result.DuplicatesSkipped)),
+            LanguageService.TranslateFormat("排除项跳过 {count}", ("{count}", result.ExcludedSkipped)),
+            LanguageService.TranslateFormat("无法启动跳过 {count}", ("{count}", result.UnlaunchableSkipped))
         };
                 if (result.Errors.Count > 0)
                 {
@@ -8120,9 +8129,14 @@ namespace BlockBox
         /// </summary>
         private async Task BatchAddShortcutsAsync(List<string> paths, Category cat)
         {
-            var existing = BlockBox.Data.ShortcutRepository.GetByCategory(_currentMode, cat.Id)
-                .Select(s => s.TargetPath)
-                .Where(p => !string.IsNullOrEmpty(p))
+            var existingRows = BlockBox.Data.ShortcutRepository.GetByCategory(_currentMode, cat.Id)
+                .Where(s => !string.IsNullOrEmpty(s.TargetPath))
+                .ToList();
+            var existing = existingRows
+                .Select(s => BlockBox.Helpers.ProgramIdentity.Get(s.TargetPath, s.Arguments))
+                .ToHashSet(StringComparer.Ordinal);
+            var existingExeKeys = existingRows
+                .Select(s => BlockBox.Helpers.ProgramIdentity.ResolveTarget(s.TargetPath))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
             int added = 0, rejected = 0, duplicated = 0;
@@ -8131,7 +8145,9 @@ namespace BlockBox
 
             foreach (var path in paths)
             {
-                if (existing.Contains(path))
+                string identity = BlockBox.Helpers.ProgramIdentity.Get(path);
+                string exeKey = BlockBox.Helpers.ProgramIdentity.ResolveTarget(path);
+                if (existing.Contains(identity) || existingExeKeys.Contains(exeKey))
                 {
                     duplicated++;
                     dupNames.Add(System.IO.Path.GetFileName(path));
@@ -8151,7 +8167,8 @@ namespace BlockBox
                 if (ok)
                 {
                     added++;
-                    existing.Add(path);
+                    existing.Add(identity);
+                    existingExeKeys.Add(exeKey);
                     addedNames.Add(System.IO.Path.GetFileNameWithoutExtension(path));
                 }
             }
@@ -8216,10 +8233,13 @@ namespace BlockBox
                     }
                 }
 
+                var shortcutInfo = BlockBox.Services.InstalledProgramScanner.ResolveShortcutInfo(filePath);
                 var item = new ShortcutItem
                 {
                     Name = System.IO.Path.GetFileNameWithoutExtension(filePath),
                     TargetPath = filePath,
+                    Arguments = shortcutInfo?.Arguments ?? "",
+                    WorkingDirectory = shortcutInfo?.WorkingDirectory ?? "",
                     CategoryId = cat.Id,
                     IsShared = cat.IsShared,
                     BelongingMode = cat.BelongingMode ?? _currentMode,
@@ -8545,7 +8565,10 @@ namespace BlockBox
                 return;
 
             bool alreadyExists = BlockBox.Data.ShortcutRepository.GetByCategory(_currentMode, allApps.Id)
-                .Any(item => string.Equals(item.TargetPath, source.TargetPath, StringComparison.OrdinalIgnoreCase));
+                .Any(item => string.Equals(
+                    BlockBox.Helpers.ProgramIdentity.Get(item.TargetPath, item.Arguments),
+                    BlockBox.Helpers.ProgramIdentity.Get(source.TargetPath, source.Arguments),
+                    StringComparison.Ordinal));
             if (alreadyExists)
                 return;
 

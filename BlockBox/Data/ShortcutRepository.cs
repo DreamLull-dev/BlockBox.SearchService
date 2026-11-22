@@ -1154,15 +1154,15 @@ namespace BlockBox.Data
         /// </summary>
         public static bool ExistsInCategory(string categoryId, AppMode mode, string targetPath)
         {
-            using var conn = DatabaseContext.OpenConnection();
-            using var cmd = conn.CreateCommand();
-            cmd.CommandText = CategoryRepository.IsShared(categoryId)
-                ? @"SELECT COUNT(*) FROM SharedShortcuts WHERE CategoryId=@c AND TargetPath=@p COLLATE NOCASE"
-                : @"SELECT COUNT(*) FROM Shortcuts WHERE CategoryId=@c AND BelongingMode=@m AND TargetPath=@p COLLATE NOCASE";
-            cmd.Parameters.AddWithValue("@c", categoryId);
-            cmd.Parameters.AddWithValue("@m", (int)mode);
-            cmd.Parameters.AddWithValue("@p", targetPath);
-            return Convert.ToInt32(cmd.ExecuteScalar()) > 0;
+            string identity = BlockBox.Helpers.ProgramIdentity.Get(targetPath);
+            var rows = CategoryRepository.IsShared(categoryId)
+                ? GetSharedByCategory(categoryId)
+                : GetByCategory(mode, categoryId);
+
+            return rows.Any(item => string.Equals(
+                BlockBox.Helpers.ProgramIdentity.Get(item.TargetPath, item.Arguments),
+                identity,
+                StringComparison.Ordinal));
         }
         /// <summary>
         /// 批量更新 SortOrder（拖拽排序后调用）

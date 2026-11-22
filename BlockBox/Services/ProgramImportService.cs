@@ -185,6 +185,14 @@ namespace BlockBox.Services
     public sealed class ProgramImportResult
     {
         public int Scanned { get; set; }
+
+        // 候选来源分布
+        public int SourceStartMenu { get; set; }
+        public int SourceDesktop { get; set; }
+        public int SourceRegistry { get; set; }
+        public int SourceAppPath { get; set; }
+        public int SourceStore { get; set; }
+
         public int AddedAllApps { get; set; }
         public int AddedGame { get; set; }
         public int AddedOffice { get; set; }
@@ -193,6 +201,9 @@ namespace BlockBox.Services
         public int FromBuiltInRules { get; set; }
         public List<(string Name, string TargetPath, string Category, bool FromHistory)> CategoryMatches { get; } = new();
         public int Skipped { get; set; }
+        public int DuplicatesSkipped { get; set; }
+        public int ExcludedSkipped { get; set; }
+        public int UnlaunchableSkipped { get; set; }
         public List<string> Errors { get; } = new();
     }
 
@@ -230,19 +241,32 @@ namespace BlockBox.Services
 
             progress?.Report("正在扫描已安装程序...");
             BlockBox.Helpers.StartupLog.Step("导入: 开始扫描已安装程序");
-            var programs = await Task.Run(() => InstalledProgramScanner.ScanAll(filter), ct);
+            ScanStats scanStats = new();
+            var programs = await Task.Run(() => InstalledProgramScanner.ScanAll(filter, out scanStats), ct);
             BlockBox.Helpers.StartupLog.Step($"导入: 扫描完成，共 {programs.Count} 个");
             total.Scanned = programs.Count;
+            total.SourceStartMenu = programs.Count(p =>
+                p.Source is ProgramSource.StartMenuUser or ProgramSource.StartMenuCommon);
+            total.SourceDesktop = programs.Count(p =>
+                p.Source is ProgramSource.DesktopUser or ProgramSource.DesktopCommon);
+            total.SourceRegistry = programs.Count(p =>
+                p.Source is ProgramSource.Registry64 or ProgramSource.Registry32 or ProgramSource.RegistryCurrentUser);
+            total.SourceAppPath = programs.Count(p => p.Source == ProgramSource.AppPath);
+            total.SourceStore = programs.Count(p => p.Source is ProgramSource.StoreApp or ProgramSource.UwpApp);
+            total.DuplicatesSkipped = scanStats.DuplicatesRemoved;
+            total.UnlaunchableSkipped = scanStats.Unlaunchable;
+
             var excludedPaths = ExcludedProgramRepository.GetAll()
                 .Select(item => item.TargetPath)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            int beforeExclusion = programs.Count;
             programs = programs.Where(program =>
             {
                 string? executable = ExcludedProgramRepository.GetExecutablePath(program.ResolvedTargetPath)
                     ?? ExcludedProgramRepository.GetExecutablePath(program.TargetPath);
                 return executable == null || !excludedPaths.Contains(executable);
             }).ToList();
-            total.Skipped += total.Scanned - programs.Count;
+            total.ExcludedSkipped = beforeExclusion - programs.Count;
             progress?.Report($"扫描到 {programs.Count} 个程序，正在分类导入...");
 
             // ⭐ 跨模式共享图标缓存：TargetPath -> IconPath
@@ -251,6 +275,7 @@ namespace BlockBox.Services
             progress?.Report("正在写入全局共享程序库...");
             BlockBox.Helpers.StartupLog.Step("导入: 开始写入共享程序库");
             await ImportToSharedAsync(programs, filter, total, iconCache, ct);
+            total.DuplicatesSkipped += total.Skipped;
             BlockBox.Helpers.StartupLog.Step("导入: 共享程序库写入完成");
 
             string iconCacheDirectory = Path.Combine(
@@ -278,10 +303,10 @@ namespace BlockBox.Services
             string catIdOffice = EnsureSharedCategory(CategoryOffice);
             string catIdMusic = EnsureSharedCategory(CategoryMusic);
 
-            var existingAllApps = GetExistingSharedPaths(catIdAllApps);
-            var existingGame = GetExistingSharedPaths(catIdGame);
-            var existingOffice = GetExistingSharedPaths(catIdOffice);
-            var existingMusic = GetExistingSharedPaths(catIdMusic);
+            var existingAllApps = GetExistingSharedKeys(catIdAllApps);
+            var existingGame = GetExistingSharedKeys(catIdGame);
+            var existingOffice = GetExistingSharedKeys(catIdOffice);
+            var existingMusic = GetExistingSharedKeys(catIdMusic);
             var history = ProgramCategoryHistory.GetAll()
                 .GroupBy(entry => entry.Identity, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(group => group.Key, group => group.ToList(), StringComparer.OrdinalIgnoreCase);
@@ -314,10 +339,10 @@ namespace BlockBox.Services
                             p.ResolvedTargetPath, p.TargetPath, p.DisplayName);
                         if (migrated > 0)
                         {
-                            existingAllApps = GetExistingSharedPaths(catIdAllApps);
-                            existingGame = GetExistingSharedPaths(catIdGame);
-                            existingOffice = GetExistingSharedPaths(catIdOffice);
-                            existingMusic = GetExistingSharedPaths(catIdMusic);
+                            existingAllApps = GetExistingSharedKeys(catIdAllApps);
+                            existingGame = GetExistingSharedKeys(catIdGame);
+                            existingOffice = GetExistingSharedKeys(catIdOffice);
+                            existingMusic = GetExistingSharedKeys(catIdMusic);
                             System.Diagnostics.Debug.WriteLine(
                                 $"[程序导入] 已迁移历史目标 {p.ResolvedTargetPath} -> {p.TargetPath}; Count={migrated}");
                         }
@@ -341,9 +366,10 @@ namespace BlockBox.Services
                     }
 
                     // ---- 全部应用 ----
-                    if (existingAllApps.Add(p.TargetPath))
+                    if (!ExistsAsProgram(existingAllApps, p))
                     {
                         AddSharedShortcut(p, catIdAllApps);
+                        Remember(existingAllApps, p);
                         total.AddedAllApps++;
                     }
                     else
@@ -397,27 +423,30 @@ namespace BlockBox.Services
                     switch (category)
                     {
                         case ProgramCategoryClassifier.Category.Game:
-                            if (existingGame.Add(p.TargetPath))
+                            if (!ExistsAsProgram(existingGame, p))
                             {
                                 AddSharedShortcut(p, catIdGame);
+                                Remember(existingGame, p);
                                 total.AddedGame++;
                             }
                             else UpdateExistingSharedIcon(catIdGame, p);
                             break;
 
                         case ProgramCategoryClassifier.Category.Office:
-                            if (existingOffice.Add(p.TargetPath))
+                            if (!ExistsAsProgram(existingOffice, p))
                             {
                                 AddSharedShortcut(p, catIdOffice);
+                                Remember(existingOffice, p);
                                 total.AddedOffice++;
                             }
                             else UpdateExistingSharedIcon(catIdOffice, p);
                             break;
 
                         case ProgramCategoryClassifier.Category.Music:
-                            if (existingMusic.Add(p.TargetPath))
+                            if (!ExistsAsProgram(existingMusic, p))
                             {
                                 AddSharedShortcut(p, catIdMusic);
+                                Remember(existingMusic, p);
                                 total.AddedMusic++;
                             }
                             else UpdateExistingSharedIcon(catIdMusic, p);
@@ -460,12 +489,34 @@ namespace BlockBox.Services
             return cat.Id;
         }
 
-        private static HashSet<string> GetExistingSharedPaths(string categoryId)
+        private sealed class ExistingProgramKeys
         {
-            return ShortcutRepository.GetSharedByCategory(categoryId)
-                .Select(s => s.TargetPath)
-                .Where(p => !string.IsNullOrEmpty(p))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            public HashSet<string> Identities { get; } = new(StringComparer.Ordinal);
+            public HashSet<string> ExeKeys { get; } = new(StringComparer.OrdinalIgnoreCase);
+        }
+
+        private static ExistingProgramKeys GetExistingSharedKeys(string categoryId)
+        {
+            var keys = new ExistingProgramKeys();
+            foreach (var item in ShortcutRepository.GetSharedByCategory(categoryId))
+            {
+                if (string.IsNullOrWhiteSpace(item.TargetPath)) continue;
+                keys.Identities.Add(ProgramIdentity.Get(item.TargetPath, item.Arguments));
+                keys.ExeKeys.Add(ProgramIdentity.ResolveTarget(item.TargetPath));
+            }
+            return keys;
+        }
+
+        /// <summary>按“程序身份”判断是否已存在；无参数的候选还与裸 exe 记录互通，避免快捷方式/注册表互相重复。</summary>
+        private static bool ExistsAsProgram(ExistingProgramKeys keys, InstalledProgramInfo program)
+            => keys.Identities.Contains(program.Identity)
+                || (program.Arguments.Length == 0
+                    && keys.ExeKeys.Contains(ProgramIdentity.ResolveTarget(program.TargetPath)));
+
+        private static void Remember(ExistingProgramKeys keys, InstalledProgramInfo program)
+        {
+            keys.Identities.Add(program.Identity);
+            keys.ExeKeys.Add(ProgramIdentity.ResolveTarget(program.TargetPath));
         }
 
         private static async Task<string?> ExtractShortcutIconAsync(
@@ -495,8 +546,12 @@ namespace BlockBox.Services
             if (string.IsNullOrWhiteSpace(program.LocalIconPath))
                 return;
 
+            string programExeKey = ProgramIdentity.ResolveTarget(program.TargetPath);
             var existing = ShortcutRepository.GetSharedByCategory(categoryId)
-                .FirstOrDefault(item => string.Equals(item.TargetPath, program.TargetPath, StringComparison.OrdinalIgnoreCase));
+                .FirstOrDefault(item =>
+                    ProgramIdentity.Get(item.TargetPath, item.Arguments) == program.Identity
+                    || (program.Arguments.Length == 0
+                        && ProgramIdentity.ResolveTarget(item.TargetPath) == programExeKey));
             if (existing != null && !string.Equals(existing.IconPath, program.LocalIconPath, StringComparison.OrdinalIgnoreCase))
                 ShortcutRepository.UpdateIconPath(existing.Id, program.LocalIconPath);
         }
@@ -507,6 +562,8 @@ namespace BlockBox.Services
             {
                 Name = p.DisplayName,
                 TargetPath = p.TargetPath,
+                Arguments = p.Arguments ?? "",
+                WorkingDirectory = p.WorkingDirectory ?? "",
                 CategoryId = categoryId,
                 IsShared = true,
                 IsFile = false,

@@ -1,3 +1,4 @@
+using BlockBox.Helpers;
 using BlockBox.Models;
 using Microsoft.Win32;
 using System;
@@ -607,14 +608,19 @@ namespace BlockBox.Services
         
 
         public static List<InstalledProgramInfo> ScanAll(ProgramFilter? filter = null)
+            => ScanAll(filter, out _);
+
+        public static List<InstalledProgramInfo> ScanAll(ProgramFilter? filter, out ScanStats stats)
         {
+            stats = new ScanStats();
             var results = new List<InstalledProgramInfo>();
 
             System.Diagnostics.Debug.WriteLine(
                 $"[程序扫描] 开始; User={Environment.UserDomainName}\\{Environment.UserName}; Base={AppContext.BaseDirectory}; Is64Bit={Environment.Is64BitProcess}");
 
-            ScanRegistry(results, filter);
+            ScanRegistry(results, filter, stats);
             ScanShortcutFolders(results, filter);
+            ScanAppPaths(results, filter);
             //ScanStoreApps(results, filter);
             ScanUwpApps(results, filter);
 
@@ -622,8 +628,7 @@ namespace BlockBox.Services
             var valid = new List<(InstalledProgramInfo Info, string RealTarget)>();
             int emptyTargetCount = 0;
             int invalidExtensionCount = 0;
-            int missingTargetCount = 0;
-            foreach (var p in results)
+            int missingTargetCount = 0;            foreach (var p in results)
             {
                 if (string.IsNullOrWhiteSpace(p.TargetPath))
                 {
@@ -679,44 +684,78 @@ namespace BlockBox.Services
 
                 p.ResolvedTargetPath = useShortcutFallback ? realTarget : null;
                 if (isScannedShortcut)
+                {
                     p.PreferredIconSourcePath = originalTargetPath;
-                p.TargetPath = storedTarget;
-                valid.Add((p, storedTarget));
+                    var shortcutInfo = ResolveShortcutInfo(originalTargetPath);
+                    if (shortcutInfo != null)
+                    {
+                        p.Arguments = shortcutInfo.Arguments;
+                        p.WorkingDirectory = shortcutInfo.WorkingDirectory;
+                    }
+                }
+
+                // 快捷方式记录保留 .lnk 路径（启动时能带上参数/工作目录），其余用解析后的真实目标。
+                p.TargetPath = isScannedShortcut ? originalTargetPath : storedTarget;
+                // .url 的 realTarget 仍是 .url 路径，身份要按里面的 URL 计算，才能和数据库去重。
+                p.Identity = Path.GetExtension(originalTargetPath).Equals(".url", StringComparison.OrdinalIgnoreCase)
+                    ? ProgramIdentity.Get(originalTargetPath)
+                    : BuildIdentity(realTarget, p.Arguments);
+                valid.Add((p, realTarget));
             }
+
+            stats.EmptyTarget = emptyTargetCount;
+            stats.InvalidExtension = invalidExtensionCount;
+            stats.MissingTarget = missingTargetCount;
 
             valid = RemoveVersionIndependentApplicationLaunchers(valid);
             valid = PreferUrlEntriesWithSameName(valid);
 
-            var grouped = valid
-                .GroupBy(x => Path.GetExtension(x.Info.TargetPath).Equals(".url", StringComparison.OrdinalIgnoreCase)
-                    ? $"url:{Path.GetFileNameWithoutExtension(x.Info.TargetPath)}"
-                    : $"path:{x.RealTarget.Trim()}", StringComparer.OrdinalIgnoreCase);
+            // 快捷方式优先：同一 exe 已有快捷方式时，注册表 / App Paths 的裸 exe 记录丢弃。
+            var shortcutExeKeys = valid
+                .Where(item => IsShortcutSource(item.Info.Source))
+                .Select(item => NormalizeIdentityPath(item.RealTarget))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+            valid = valid
+                .Where(item => IsShortcutSource(item.Info.Source)
+                    || !shortcutExeKeys.Contains(NormalizeIdentityPath(item.RealTarget)))
+                .ToList();
+
+            var grouped = valid.GroupBy(x => x.Info.Identity, StringComparer.Ordinal);
             var final = new List<InstalledProgramInfo>();
-            foreach (var g in grouped)
+            int duplicateCount = 0;
+
+            foreach (var group in grouped)
             {
-                var entries = g.ToList();
+                var entries = group.ToList();
+                if (entries.Count > 1)
+                    duplicateCount += entries.Count - 1;
+
                 var best = PickBestEntry(entries.Select(x => x.Info).ToList());
                 var bestEntry = entries.First(x => ReferenceEquals(x.Info, best));
-                var shortcutFallback = entries.FirstOrDefault(x =>
-                    Path.GetExtension(x.Info.TargetPath).Equals(".lnk", StringComparison.OrdinalIgnoreCase)
-                    || Path.GetExtension(x.Info.TargetPath).Equals(".url", StringComparison.OrdinalIgnoreCase));
-                best.TargetPath = shortcutFallback.Info != null
-                    ? shortcutFallback.Info.TargetPath
-                    : bestEntry.RealTarget;
-                best.ResolvedTargetPath ??= shortcutFallback.Info != null
-                    ? shortcutFallback.RealTarget
-                    : bestEntry.RealTarget;
+                var shortcutEntry = entries
+                    .Where(x => IsShortcutSource(x.Info.Source))
+                    .OrderByDescending(x => SourcePriority(x.Info.Source))
+                    .FirstOrDefault();
+
+                bool hasShortcut = shortcutEntry.Info != null;
+                best.TargetPath = hasShortcut ? shortcutEntry.Info.TargetPath : bestEntry.RealTarget;
+                best.Arguments = hasShortcut ? shortcutEntry.Info.Arguments : "";
+                best.WorkingDirectory = hasShortcut ? shortcutEntry.Info.WorkingDirectory : "";
+                best.ResolvedTargetPath ??= hasShortcut ? shortcutEntry.RealTarget : bestEntry.RealTarget;
                 best.PreferredIconSourcePath = entries
-                    .Where(x => x.Info.Source is ProgramSource.StartMenuUser or ProgramSource.StartMenuCommon
-                        or ProgramSource.DesktopUser or ProgramSource.DesktopCommon)
+                    .Where(x => IsShortcutSource(x.Info.Source))
+                    .OrderByDescending(x => SourcePriority(x.Info.Source))
                     .Select(x => x.Info.PreferredIconSourcePath)
                     .FirstOrDefault(path => !string.IsNullOrWhiteSpace(path));
+                best.Identity = group.Key;
                 final.Add(best);
             }
 
+            stats.DuplicatesRemoved = duplicateCount;
+
             System.Diagnostics.Debug.WriteLine(
-                $"[程序扫描] 完成; 原始记录={results.Count}; 有效记录={valid.Count}; 去重后={final.Count}; 空目标={emptyTargetCount}; 扩展名不支持={invalidExtensionCount}; 文件不存在={missingTargetCount}");
+                $"[程序扫描] 完成; 原始记录={results.Count}; 有效记录={valid.Count}; 去重后={final.Count}; 空目标={emptyTargetCount}; 扩展名不支持={invalidExtensionCount}; 文件不存在={missingTargetCount}; 重复={duplicateCount}; 无法启动={stats.Unlaunchable}");
 
             return final
                 .OrderBy(p => p.DisplayName, StringComparer.CurrentCultureIgnoreCase)
@@ -832,42 +871,118 @@ namespace BlockBox.Services
         ///   3. 再不行取第一条
         /// </summary>
         private static InstalledProgramInfo PickBestEntry(List<InstalledProgramInfo> list)
-        {
-            var fromRegistry = list
-                .Where(p => p.Source == ProgramSource.Registry64
-                         || p.Source == ProgramSource.Registry32
-                         || p.Source == ProgramSource.RegistryCurrentUser)
-                .ToList();
-
-            var candidates = fromRegistry.Count > 0 ? fromRegistry : list;
-
-            return candidates
-                .OrderByDescending(p => (p.DisplayName ?? "").Length)
+            => list.OrderByDescending(p => SourcePriority(p.Source))
+                .ThenByDescending(p => (p.DisplayName ?? "").Length)
                 .First();
+
+        private static bool IsShortcutSource(ProgramSource source)
+            => source is ProgramSource.StartMenuUser or ProgramSource.StartMenuCommon
+                or ProgramSource.DesktopUser or ProgramSource.DesktopCommon;
+
+        private static int SourcePriority(ProgramSource source) => source switch
+        {
+            ProgramSource.StartMenuUser => 100,
+            ProgramSource.StartMenuCommon => 95,
+            ProgramSource.DesktopUser => 90,
+            ProgramSource.DesktopCommon => 85,
+            ProgramSource.RegistryCurrentUser => 55,
+            ProgramSource.Registry64 => 50,
+            ProgramSource.Registry32 => 45,
+            ProgramSource.AppPath => 40,
+            ProgramSource.UwpApp => 30,
+            _ => 10
+        };
+
+        private static string NormalizeIdentityPath(string path)
+            => (path ?? "").Trim().TrimEnd('\\').ToLowerInvariant();
+
+        private static string BuildIdentity(string realTarget, string arguments)
+        {
+            string path = NormalizeIdentityPath(realTarget);
+            string args = (arguments ?? "").Trim();
+            return args.Length == 0 ? path : path + "|" + args;
         }
 
         // ==================== 注册表 ====================
 
-        private static void ScanRegistry(List<InstalledProgramInfo> results, ProgramFilter? filter)
+        private static void ScanRegistry(List<InstalledProgramInfo> results, ProgramFilter? filter, ScanStats stats)
         {
             const string uninstallKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";
 
             using (var hklm64 = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64))
             using (var key = hklm64.OpenSubKey(uninstallKey))
             {
-                ReadSubKeys(key, results, ProgramSource.Registry64, filter);
+                ReadSubKeys(key, results, ProgramSource.Registry64, filter, stats);
             }
 
             using (var hklm32 = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry32))
             using (var key = hklm32.OpenSubKey(uninstallKey))
             {
-                ReadSubKeys(key, results, ProgramSource.Registry32, filter);
+                ReadSubKeys(key, results, ProgramSource.Registry32, filter, stats);
             }
 
             using (var hkcu = RegistryKey.OpenBaseKey(RegistryHive.CurrentUser, RegistryView.Default))
             using (var key = hkcu.OpenSubKey(uninstallKey))
             {
-                ReadSubKeys(key, results, ProgramSource.RegistryCurrentUser, filter);
+                ReadSubKeys(key, results, ProgramSource.RegistryCurrentUser, filter, stats);
+            }
+        }
+
+        /// <summary>
+        /// App Paths：应用主动注册的可启动 exe，用来补充“已安装但没有开始菜单/桌面快捷方式”的程序。
+        /// </summary>
+        private static void ScanAppPaths(List<InstalledProgramInfo> results, ProgramFilter? filter)
+        {
+            const string appPathsKey = @"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths";
+
+            AddFromHive(RegistryHive.LocalMachine, RegistryView.Registry64);
+            AddFromHive(RegistryHive.LocalMachine, RegistryView.Registry32);
+            AddFromHive(RegistryHive.CurrentUser, RegistryView.Default);
+
+            void AddFromHive(RegistryHive hive, RegistryView view)
+            {
+                try
+                {
+                    using var baseKey = RegistryKey.OpenBaseKey(hive, view);
+                    using var root = baseKey.OpenSubKey(appPathsKey);
+                    if (root == null) return;
+
+                    foreach (string subName in root.GetSubKeyNames())
+                    {
+                        try
+                        {
+                            using var sub = root.OpenSubKey(subName);
+                            if (sub?.GetValue(null) is not string raw || string.IsNullOrWhiteSpace(raw))
+                                continue;
+
+                            string exePath = raw.Trim().Trim('"').Trim();
+                            if (!File.Exists(exePath) || !IsLaunchableExtension(exePath))
+                                continue;
+                            if (IsInExcludedPath(exePath))
+                                continue;
+
+                            string name = Path.GetFileNameWithoutExtension(subName);
+                            if (string.IsNullOrWhiteSpace(name))
+                                name = Path.GetFileNameWithoutExtension(exePath);
+                            if (string.IsNullOrWhiteSpace(name))
+                                continue;
+                            if (filter?.ShouldExclude(name) == true)
+                                continue;
+                            if (IsWindowsSystemItem(name))
+                                continue;
+
+                            results.Add(new InstalledProgramInfo
+                            {
+                                DisplayName = name,
+                                TargetPath = exePath,
+                                Source = ProgramSource.AppPath,
+                                InstallLocation = sub.GetValue("Path") as string
+                            });
+                        }
+                        catch { }
+                    }
+                }
+                catch { }
             }
         }
 
@@ -875,7 +990,8 @@ namespace BlockBox.Services
             RegistryKey? parent,
             List<InstalledProgramInfo> results,
             ProgramSource source,
-            ProgramFilter? filter)
+            ProgramFilter? filter,
+            ScanStats stats)
         {
             if (parent == null) return;
 
@@ -903,7 +1019,15 @@ namespace BlockBox.Services
                     if (IsWindowsSystemItem(displayName)) continue;
 
                     string? exePath = ResolveExecutablePath(sub);
-                    if (string.IsNullOrWhiteSpace(exePath)) continue;
+                    if (string.IsNullOrWhiteSpace(exePath))
+                    {
+                        stats.Unlaunchable++;
+                        if (stats.UnlaunchableNames.Count < 100)
+                            stats.UnlaunchableNames.Add(displayName.Trim());
+                        System.Diagnostics.Debug.WriteLine(
+                            $"[程序扫描] 无法定位启动程序; Name={displayName}; Source={source}; InstallLocation={sub.GetValue("InstallLocation")}");
+                        continue;
+                    }
                     // ⭐ 新增：排除系统缓存目录
                     if (IsInExcludedPath(exePath)) continue;
 
@@ -950,8 +1074,10 @@ namespace BlockBox.Services
 
                 try
                 {
-                    var exes = Directory.GetFiles(loc, "*.exe", SearchOption.TopDirectoryOnly);
-                    if (exes.Length == 1) return exes[0];
+                    var exes = Directory.GetFiles(loc, "*.exe", SearchOption.TopDirectoryOnly)
+                        .Where(path => !IsLikelyNonMainExecutable(path))
+                        .ToList();
+                    if (exes.Count == 1) return exes[0];
 
                     string? displayName = sub.GetValue("DisplayName") as string;
                     if (!string.IsNullOrWhiteSpace(displayName))
@@ -959,6 +1085,10 @@ namespace BlockBox.Services
                         string simple = new string(displayName.Where(char.IsLetterOrDigit).ToArray()).ToLowerInvariant();
                         if (simple.Length > 0)
                         {
+                            var exact = exes.FirstOrDefault(e =>
+                                Path.GetFileNameWithoutExtension(e).Equals(simple, StringComparison.OrdinalIgnoreCase));
+                            if (exact != null) return exact;
+
                             var best = exes.FirstOrDefault(e =>
                             {
                                 string exeName = Path.GetFileNameWithoutExtension(e).ToLowerInvariant();
@@ -981,6 +1111,17 @@ namespace BlockBox.Services
             return ext == ".exe" || ext == ".lnk" || ext == ".bat" || ext == ".cmd"
                 || ext == ".com" || ext == ".msc" || ext == ".cpl"
                 || ext == ".ps1" || ext == ".jar" || ext == ".appref-ms";
+        }
+
+        /// <summary>明显不是主程序的 exe（卸载器、安装器、更新器、崩溃报告等）。</summary>
+        private static bool IsLikelyNonMainExecutable(string path)
+        {
+            string name = Path.GetFileNameWithoutExtension(path).ToLowerInvariant();
+            return name.StartsWith("unins") || name.StartsWith("uninstall")
+                || name.StartsWith("setup") || name.StartsWith("update") || name.StartsWith("updater")
+                || name.StartsWith("crash") || name.StartsWith("report") || name.StartsWith("helper")
+                || name.StartsWith("vcredist") || name.StartsWith("dxsetup") || name.StartsWith("install")
+                || name.StartsWith("nsis");
         }
 
         // ==================== 开始菜单与桌面快捷方式 ====================
@@ -1041,10 +1182,16 @@ namespace BlockBox.Services
 
                 try
                 {
-                    IEnumerable<string> shortcutPaths = source is ProgramSource.DesktopUser or ProgramSource.DesktopCommon
-                        ? Directory.EnumerateFiles(folder, "*.url", SearchOption.AllDirectories)
-                        : Directory.EnumerateFiles(folder, "*.lnk", SearchOption.AllDirectories)
-                            .Concat(Directory.EnumerateFiles(folder, "*.url", SearchOption.AllDirectories));
+                    var enumeration = new EnumerationOptions
+                    {
+                        RecurseSubdirectories = true,
+                        IgnoreInaccessible = true,
+                        AttributesToSkip = 0
+                    };
+
+                    // 开始菜单和桌面都同时枚举 .lnk / .url；桌面以前只扫 .url，导致桌面快捷方式全部漏掉。
+                    IEnumerable<string> shortcutPaths = Directory.EnumerateFiles(folder, "*.lnk", enumeration)
+                        .Concat(Directory.EnumerateFiles(folder, "*.url", enumeration));
 
                     foreach (var shortcutPath in shortcutPaths)
                     {
@@ -1128,7 +1275,7 @@ namespace BlockBox.Services
                 if (!visited.Add(current))
                     return null;
 
-                string? next = ResolveLnkOnce(current);
+                string? next = ResolveLnkOnce(current)?.TargetPath;
                 if (string.IsNullOrEmpty(next) || string.Equals(next, current, StringComparison.OrdinalIgnoreCase))
                     return null;
 
@@ -1139,7 +1286,7 @@ namespace BlockBox.Services
         }
 
         /// <summary>解析一层 .lnk，失败返回 null</summary>
-        private static string? ResolveLnkOnce(string lnkPath)
+        private static ShortcutInfo? ResolveLnkOnce(string lnkPath)
         {
             object? shellObj = null;
             object? shortcutObj = null;
@@ -1156,7 +1303,19 @@ namespace BlockBox.Services
                 dynamic shortcut = shortcutObj;
 
                 string target = (string)shortcut.TargetPath;
-                return string.IsNullOrWhiteSpace(target) ? null : target;
+                if (string.IsNullOrWhiteSpace(target)) return null;
+
+                string arguments = "";
+                string workingDirectory = "";
+                try { arguments = (string)shortcut.Arguments ?? ""; } catch { }
+                try { workingDirectory = (string)shortcut.WorkingDirectory ?? ""; } catch { }
+
+                return new ShortcutInfo
+                {
+                    TargetPath = target,
+                    Arguments = arguments.Trim(),
+                    WorkingDirectory = workingDirectory.Trim()
+                };
             }
             catch
             {
@@ -1171,15 +1330,20 @@ namespace BlockBox.Services
             }
         }
 
-        public static string? ResolveShortcutTarget(string shortcutPath)
+        public static ShortcutInfo? ResolveShortcutInfo(string shortcutPath)
         {
-            if (string.IsNullOrWhiteSpace(shortcutPath)
-                || !Path.GetExtension(shortcutPath).Equals(".lnk", StringComparison.OrdinalIgnoreCase)
-                    && !Path.GetExtension(shortcutPath).Equals(".Ink", StringComparison.OrdinalIgnoreCase))
+            if (string.IsNullOrWhiteSpace(shortcutPath)) return null;
+
+            string extension = Path.GetExtension(shortcutPath);
+            if (!extension.Equals(".lnk", StringComparison.OrdinalIgnoreCase)
+                && !extension.Equals(".Ink", StringComparison.OrdinalIgnoreCase))
                 return null;
 
             return ResolveLnkOnce(shortcutPath);
         }
+
+        public static string? ResolveShortcutTarget(string shortcutPath)
+            => ResolveShortcutInfo(shortcutPath)?.TargetPath;
 
         public static string? FindMatchingStartMenuShortcut(string shortcutPath, string displayName)
         {
@@ -1231,7 +1395,7 @@ namespace BlockBox.Services
                         if (score == 0)
                             continue;
 
-                        if (string.IsNullOrWhiteSpace(ResolveLnkOnce(candidate)))
+                        if (string.IsNullOrWhiteSpace(ResolveShortcutTarget(candidate)))
                             continue;
 
                         candidates.Add((candidate, candidateName, score));
