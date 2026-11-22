@@ -710,21 +710,32 @@ namespace BlockBox.Services
             valid = RemoveVersionIndependentApplicationLaunchers(valid);
             valid = PreferUrlEntriesWithSameName(valid);
 
+            // WindowsApps 包内的 exe 不作为独立卡片：统一由 UWP 扫描提供 shell:AppsFolder AUMID 入口，
+            // 避免 Apple Music 这类商店应用同时出现 exe 和 AUMID 两张卡。
+            int windowsAppsExecutables = valid.RemoveAll(item =>
+                ProgramIdentity.TryGetUwpIdentity(item.RealTarget, out _)
+                && item.Info.Source is not (ProgramSource.UwpApp or ProgramSource.StoreApp));
+            if (windowsAppsExecutables > 0)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"[程序扫描] 忽略 WindowsApps 包内 exe 候选: {windowsAppsExecutables}");
+            }
+
             // 快捷方式优先：同一 exe 已有快捷方式时，注册表 / App Paths 的裸 exe 记录丢弃。
             var shortcutExeKeys = valid
                 .Where(item => IsShortcutSource(item.Info.Source))
-                .Select(item => NormalizeIdentityPath(item.RealTarget))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                .Select(item => ProgramIdentity.ResolveTarget(item.RealTarget))
+                .ToHashSet(StringComparer.Ordinal);
 
             valid = valid
                 .Where(item => IsShortcutSource(item.Info.Source)
-                    || !shortcutExeKeys.Contains(NormalizeIdentityPath(item.RealTarget)))
+                    || !shortcutExeKeys.Contains(ProgramIdentity.ResolveTarget(item.RealTarget)))
                 .ToList();
 
             // 先按“真实目标”分组（同一个 exe），再处理启动参数：
             // · 参数只是启动入口/最小化之类（/run:desktop、/run:winmenu…）→ 只保留桌面/完整客户端一条；
             // · 参数有实际差异（比如 Clash 的不同模式）→ 都保留，并在名称后加参数区分。
-            var grouped = valid.GroupBy(x => NormalizeIdentityPath(x.RealTarget), StringComparer.OrdinalIgnoreCase);
+            var grouped = valid.GroupBy(x => ProgramIdentity.ResolveTarget(x.RealTarget), StringComparer.Ordinal);
             var final = new List<InstalledProgramInfo>();
             int duplicateCount = 0;
 
@@ -957,19 +968,16 @@ namespace BlockBox.Services
             ProgramSource.Registry64 => 50,
             ProgramSource.Registry32 => 45,
             ProgramSource.AppPath => 40,
-            ProgramSource.UwpApp => 30,
+            ProgramSource.UwpApp => 200,
+            ProgramSource.StoreApp => 190,
             _ => 10
         };
 
         private static string NormalizeIdentityPath(string path)
-            => (path ?? "").Trim().TrimEnd('\\').ToLowerInvariant();
+            => ProgramIdentity.ResolveTarget(path);
 
         private static string BuildIdentity(string realTarget, string arguments)
-        {
-            string path = NormalizeIdentityPath(realTarget);
-            string args = (arguments ?? "").Trim();
-            return args.Length == 0 ? path : path + "|" + args;
-        }
+            => ProgramIdentity.Get(realTarget, arguments);
 
         // ==================== 注册表 ====================
 
