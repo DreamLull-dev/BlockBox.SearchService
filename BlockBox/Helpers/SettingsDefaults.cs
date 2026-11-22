@@ -43,6 +43,9 @@ namespace BlockBox.Helpers
         public const bool OpenSearchOnStartup = false;
         /// <summary>从全局搜索添加进分类后，取消结果列表的勾选状态。</summary>
         public const bool ClearSearchSelectionAfterAdd = false;
+
+    /// <summary>扫描时忽略“没有图标且名称像组件/卸载器/更新器”的程序。</summary>
+    public const bool HideNoIconComponentPrograms = true;
         public const int CurrentMode = 2;
 
         // Behavior

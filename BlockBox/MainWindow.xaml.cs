@@ -1897,7 +1897,9 @@ namespace BlockBox
                 var result = await ProgramImportService.ScanAndImportAsync(
                     ModeRepository.GetAllModes(),
                     _programFilter,
-                    progress);
+                    progress,
+                    hideNoIconComponents: _ini.ReadBool("Program", "HideNoIconComponentPrograms",
+                        SettingsDefaults.HideNoIconComponentPrograms));
                 progressWindow.CloseIfOpen();
 
                 // ⭐⭐⭐ 诊断代码：直接查数据库 ⭐⭐⭐
@@ -1942,7 +1944,8 @@ namespace BlockBox
             LanguageService.TranslateFormat("自动分类规则匹配 {count} 个程序", ("{count}", result.FromBuiltInRules)),
             LanguageService.TranslateFormat("重复跳过 {count}", ("{count}", result.DuplicatesSkipped)),
             LanguageService.TranslateFormat("排除项跳过 {count}", ("{count}", result.ExcludedSkipped)),
-            LanguageService.TranslateFormat("无法启动跳过 {count}", ("{count}", result.UnlaunchableSkipped))
+            LanguageService.TranslateFormat("无法启动跳过 {count}", ("{count}", result.UnlaunchableSkipped)),
+            LanguageService.TranslateFormat("组件程序跳过 {count}", ("{count}", result.ComponentSkipped))
         };
                 if (result.Errors.Count > 0)
                 {

@@ -32,6 +32,7 @@ namespace BlockBox.Models
         public int MissingTarget { get; set; }
         public int DuplicatesRemoved { get; set; }
         public int Unlaunchable { get; set; }
+        public int ComponentProgramsRemoved { get; set; }
         public List<string> UnlaunchableNames { get; } = new();
     }
 

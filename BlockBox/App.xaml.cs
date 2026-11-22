@@ -152,7 +152,9 @@ namespace BlockBox
                     StartupLog.Step("开始首次程序扫描导入");
                     await ProgramImportService.ScanAndImportAsync(
     BlockBox.Data.ModeRepository.GetAllModes(),
-    filter, progress);
+    filter, progress,
+    hideNoIconComponents: ini.ReadBool("Program", "HideNoIconComponentPrograms",
+        BlockBox.Helpers.SettingsDefaults.HideNoIconComponentPrograms));
                     StartupLog.Step("首次程序扫描导入完成");
                     ini.WriteValue("Startup", "InstalledProgramsPrepared", "true");
                 }

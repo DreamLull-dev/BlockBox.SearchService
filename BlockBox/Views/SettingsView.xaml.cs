@@ -664,6 +664,7 @@ namespace BlockBox.Views
             RestoreLastTabToggle.IsOn = ReadBool("System", "RestoreLastTab", SettingsDefaults.RestoreLastTab);
             OpenSearchOnStartupToggle.IsOn = ReadBool("System", "OpenSearchOnStartup", SettingsDefaults.OpenSearchOnStartup);
             ClearSearchSelectionAfterAddToggle.IsOn = ReadBool("System", "ClearSearchSelectionAfterAdd", SettingsDefaults.ClearSearchSelectionAfterAdd);
+            HideNoIconComponentProgramsToggle.IsOn = ReadBool("Program", "HideNoIconComponentPrograms", SettingsDefaults.HideNoIconComponentPrograms);
             ConfirmRecycleBinToggle.IsOn = ReadBool("Notification", "ConfirmRecycleBin", SettingsDefaults.ConfirmRecycleBin);
 
             HotkeyAddTextBox.Text = ReadHotkey("Add", "Ctrl+1");
@@ -691,6 +692,7 @@ namespace BlockBox.Views
             string category = item.Tag?.ToString() ?? "Appearance";
             AppearanceSection.Visibility = category == "Appearance" ? Visibility.Visible : Visibility.Collapsed;
             GeneralSection.Visibility = category == "General" ? Visibility.Visible : Visibility.Collapsed;
+            ProgramsSection.Visibility = category == "Programs" ? Visibility.Visible : Visibility.Collapsed;
             HotkeysSection.Visibility = category == "Hotkeys" ? Visibility.Visible : Visibility.Collapsed;
             DataSection.Visibility = category == "Data" ? Visibility.Visible : Visibility.Collapsed;
             NotificationsSection.Visibility = category == "Notifications" ? Visibility.Visible : Visibility.Collapsed;
@@ -700,6 +702,7 @@ namespace BlockBox.Views
             {
                 "Appearance" => AppearanceSection,
                 "General" => GeneralSection,
+                "Programs" => ProgramsSection,
                 "Hotkeys" => HotkeysSection,
                 "Data" => DataSection,
                 "Notifications" => NotificationsSection,
@@ -1552,12 +1555,17 @@ namespace BlockBox.Views
                 "RestoreLastTabToggle" => "RestoreLastTab",
                 "OpenSearchOnStartupToggle" => "OpenSearchOnStartup",
                 "ClearSearchSelectionAfterAddToggle" => "ClearSearchSelectionAfterAdd",
+                "HideNoIconComponentProgramsToggle" => "HideNoIconComponentPrograms",
                 // 兜底：开关名默认等于“键 + Toggle”，避免再出现写进去的键名和读取的键名不一致。
                 _ => toggle.Name.EndsWith("Toggle", StringComparison.Ordinal)
                     ? toggle.Name[..^"Toggle".Length]
                     : toggle.Name
             };
-            string section = toggle.Name is "CategorySeparatorToggle" ? "Category" : toggle.Name.Contains("Notification") || toggle.Name.Contains("Confirm") ? "Notification" : "System";
+            string section = toggle.Name is "CategorySeparatorToggle"
+                ? "Category"
+                : toggle.Name is "HideNoIconComponentProgramsToggle"
+                    ? "Program"
+                    : toggle.Name.Contains("Notification") || toggle.Name.Contains("Confirm") ? "Notification" : "System";
             _ini?.WriteValue(section, key, toggle.IsOn.ToString().ToLowerInvariant());
             if (toggle.Name == "CategorySeparatorToggle")
                 CategoryNavigationSettingsChanged?.Invoke(this, EventArgs.Empty);

@@ -611,6 +611,10 @@ namespace BlockBox.Services
             => ScanAll(filter, out _);
 
         public static List<InstalledProgramInfo> ScanAll(ProgramFilter? filter, out ScanStats stats)
+            => ScanAll(filter, out stats, hideNoIconComponents: true);
+
+        public static List<InstalledProgramInfo> ScanAll(ProgramFilter? filter, out ScanStats stats,
+            bool hideNoIconComponents)
         {
             stats = new ScanStats();
             var results = new List<InstalledProgramInfo>();
@@ -719,6 +723,18 @@ namespace BlockBox.Services
             {
                 System.Diagnostics.Debug.WriteLine(
                     $"[程序扫描] 忽略 WindowsApps 包内 exe 候选: {windowsAppsExecutables}");
+            }
+
+            // “无图标 + 组件名/系统路径”的条目：卸载器、更新器、辅助进程等，不是正常用户会启动的程序。
+            if (hideNoIconComponents)
+            {
+                int componentPrograms = valid.RemoveAll(item => IsLikelyComponentProgram(item));
+                stats.ComponentProgramsRemoved = componentPrograms;
+                if (componentPrograms > 0)
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[程序扫描] 忽略无图标的组件程序: {componentPrograms}");
+                }
             }
 
             // 快捷方式优先：同一 exe 已有快捷方式时，注册表 / App Paths 的裸 exe 记录丢弃。
@@ -937,8 +953,7 @@ namespace BlockBox.Services
         /// 没有实际含义的启动参数：空参数、安装器的 /run:* 入口、最小化/托盘/后台启动等。
         /// 这类只保留一条（优先桌面/完整客户端）。
         /// </summary>
-        public static bool IsBenignLaunchArgument(string? arguments)
-        {
+        public static bool IsBenignLaunchArgument(string? arguments)        {
             string value = (arguments ?? "").Trim();
             if (value.Length == 0) return true;
 
@@ -952,6 +967,52 @@ namespace BlockBox.Services
                 or "--min" or "-min" or "/min"
                 or "--tray" or "-tray" or "/tray"
                 or "--background" or "-background" or "/background";
+        }
+
+        /// <summary>“无图标 + 组件名/系统路径”才算组件程序，避免误伤没有图标的正常工具。</summary>
+        private static bool IsLikelyComponentProgram((InstalledProgramInfo Info, string RealTarget) item)
+        {
+            string target = item.RealTarget;
+            if (!Path.GetExtension(target).Equals(".exe", StringComparison.OrdinalIgnoreCase))
+                return false;
+            if (ProgramIdentity.TryGetUwpIdentity(target, out _))
+                return false;
+
+            return LooksLikeComponent(target) && !HasIconResource(target);
+        }
+
+        private static bool LooksLikeComponent(string exePath)
+        {
+            string name = Path.GetFileNameWithoutExtension(exePath).ToLowerInvariant();
+            string[] prefixes =
+            {
+                "unins", "uninstall", "setup", "update", "updater", "helper",
+                "service", "daemon", "redist", "vc_redist", "dxsetup",
+                "crash", "report", "install", "nsis", "dotnet", "runtime"
+            };
+            if (prefixes.Any(prefix => name.StartsWith(prefix, StringComparison.Ordinal)))
+                return true;
+
+            string lower = exePath.ToLowerInvariant();
+            return lower.Contains(@"\windows\system32\")
+                || lower.Contains(@"\windows\syswow64\")
+                || lower.Contains(@"\programdata\");
+        }
+
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern uint ExtractIconEx(string file, int index, IntPtr[]? large, IntPtr[]? small, uint count);
+
+        /// <summary>exe 是否带图标资源；读不到时按“有图标”处理，避免误伤。</summary>
+        private static bool HasIconResource(string exePath)
+        {
+            try
+            {
+                return ExtractIconEx(exePath, 0, null, null, 1) > 0;
+            }
+            catch
+            {
+                return true;
+            }
         }
 
         private static bool IsShortcutSource(ProgramSource source)

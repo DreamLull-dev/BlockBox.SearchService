@@ -62,6 +62,7 @@
                           SelectionMode="Single">
                     <ListViewItem x:Name="AppearanceCategoryItem" helpers:PressAnimationHelper.EnableBounce="True" Content="主题 / 外观" Tag="Appearance" />
                     <ListViewItem x:Name="GeneralCategoryItem" helpers:PressAnimationHelper.EnableBounce="True" Content="通用" Tag="General" />
+                    <ListViewItem x:Name="ProgramsCategoryItem" helpers:PressAnimationHelper.EnableBounce="True" Content="程序 / 扫描" Tag="Programs" />
                     <ListViewItem x:Name="HotkeysCategoryItem" helpers:PressAnimationHelper.EnableBounce="True" Content="快捷键" Tag="Hotkeys" />
                     <ListViewItem x:Name="DataCategoryItem" helpers:PressAnimationHelper.EnableBounce="True" Content="数据 / 备份" Tag="Data" />
                     <ListViewItem x:Name="NotificationsCategoryItem" helpers:PressAnimationHelper.EnableBounce="True" Content="通知 / 提示" Tag="Notifications" />
@@ -846,6 +847,37 @@
                                                   OnContent="" OffContent="" MinWidth="0"
                                                   VerticalAlignment="Center"
                                                   Toggled="ShowExtensionToggle_Toggled" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+
+                    <!-- =========================================================
+                         程序 / 扫描
+                         ========================================================= -->
+                    <StackPanel x:Name="ProgramsSection" Spacing="18" Visibility="Collapsed">
+                        <TextBlock Text="{x:Bind helpers:LanguageService.Translate('程序 / 扫描'), Mode=OneWay}" FontSize="{x:Bind helpers:FontSizeHelper.SettingsTitleInitialFontSize}" FontWeight="SemiBold" />
+
+                        <Border Padding="16" CornerRadius="8" BorderThickness="0.6" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}">
+                            <StackPanel Spacing="0">
+                                <TextBlock Text="{x:Bind helpers:LanguageService.Translate('扫描选项'), Mode=OneWay}" FontSize="{x:Bind helpers:FontSizeHelper.SettingsTitleInitialFontSize}" FontWeight="SemiBold" Margin="0,0,0,4"/>
+
+                                <Grid Padding="0,10" ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Spacing="2">
+                                        <TextBlock Text="{x:Bind helpers:LanguageService.Translate('忽略无图标的组件程序'), Mode=OneWay}" VerticalAlignment="Center"/>
+                                        <TextBlock Text="{x:Bind helpers:LanguageService.Translate('没有图标、名称像卸载器、更新器或辅助进程的程序不会加入分类；手动添加的项目不受影响。'), Mode=OneWay}"
+                                                   FontSize="12"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                   TextWrapping="Wrap"/>
+                                    </StackPanel>
+                                    <ToggleSwitch Grid.Column="1" x:Name="HideNoIconComponentProgramsToggle"
+                                                  OnContent="" OffContent="" MinWidth="0"
+                                                  VerticalAlignment="Center"
+                                                  Toggled="GenericSetting_Toggled" />
                                 </Grid>
                             </StackPanel>
                         </Border>

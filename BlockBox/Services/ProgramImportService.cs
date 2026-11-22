@@ -204,6 +204,7 @@ namespace BlockBox.Services
         public int DuplicatesSkipped { get; set; }
         public int ExcludedSkipped { get; set; }
         public int UnlaunchableSkipped { get; set; }
+        public int ComponentSkipped { get; set; }
         public List<string> Errors { get; } = new();
     }
 
@@ -224,9 +225,10 @@ namespace BlockBox.Services
             AppMode mode,
             ProgramFilter? filter,
             IProgress<string>? progress = null,
-            CancellationToken ct = default)
+            CancellationToken ct = default,
+            bool hideNoIconComponents = true)
         {
-            return ScanAndImportAsync(new[] { mode }, filter, progress, ct);
+            return ScanAndImportAsync(new[] { mode }, filter, progress, ct, hideNoIconComponents);
         }
 
         // ==================== 对外：多模式导入 ====================
@@ -234,7 +236,8 @@ namespace BlockBox.Services
             IEnumerable<AppMode> modes,
             ProgramFilter? filter,
             IProgress<string>? progress = null,
-            CancellationToken ct = default)
+            CancellationToken ct = default,
+            bool hideNoIconComponents = true)
         {
             var total = new ProgramImportResult();
             var modeList = modes.Distinct().ToList();
@@ -242,7 +245,7 @@ namespace BlockBox.Services
             progress?.Report("正在扫描已安装程序...");
             BlockBox.Helpers.StartupLog.Step("导入: 开始扫描已安装程序");
             ScanStats scanStats = new();
-            var programs = await Task.Run(() => InstalledProgramScanner.ScanAll(filter, out scanStats), ct);
+            var programs = await Task.Run(() => InstalledProgramScanner.ScanAll(filter, out scanStats, hideNoIconComponents), ct);
             BlockBox.Helpers.StartupLog.Step($"导入: 扫描完成，共 {programs.Count} 个");
             total.Scanned = programs.Count;
             total.SourceStartMenu = programs.Count(p =>
@@ -255,6 +258,7 @@ namespace BlockBox.Services
             total.SourceStore = programs.Count(p => p.Source is ProgramSource.StoreApp or ProgramSource.UwpApp);
             total.DuplicatesSkipped = scanStats.DuplicatesRemoved;
             total.UnlaunchableSkipped = scanStats.Unlaunchable;
+            total.ComponentSkipped = scanStats.ComponentProgramsRemoved;
 
             var excludedPaths = ExcludedProgramRepository.GetAll()
                 .Select(item => item.TargetPath)
