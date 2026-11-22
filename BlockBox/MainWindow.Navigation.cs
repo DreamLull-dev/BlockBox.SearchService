@@ -482,7 +482,38 @@ namespace BlockBox
                 ConfigureTabHeaderItemTransitions(root);
 
             _hasTabViewCompletedInitialLoad = true;
+            // 首次先不用隐式尺寸动画，直接把宽度落好；后续尺寸变化再走 220ms 动画。
+            ApplyTabWidthsWithoutAnimation();
             ScheduleTabWidthUpdate(forceImmediate: true);
+        }
+
+        /// <summary>
+        /// 首次布局 / 窗口调整大小时直接应用标签宽度，临时关掉 Size 隐式动画，
+        /// 避免启动后先按内容宽度显示、100ms 后又“从左往右长开”的二次加载观感。
+        /// </summary>
+        private void ApplyTabWidthsWithoutAnimation()
+        {
+            var saved = new List<(Visual Visual, ImplicitAnimationCollection? Animations)>();
+            foreach (var item in TabItems)
+            {
+                if (MyTabView.ContainerFromItem(item) is not TabViewItem container)
+                    continue;
+
+                var visual = ElementCompositionPreview.GetElementVisual(container);
+                saved.Add((visual, visual.ImplicitAnimations));
+                visual.ImplicitAnimations = null;
+            }
+
+            try
+            {
+                UpdateTabWidths();
+                MyTabView.UpdateLayout();
+            }
+            finally
+            {
+                foreach (var (visual, animations) in saved)
+                    visual.ImplicitAnimations = animations;
+            }
         }
 
         private ListViewBase? _tabHeaderList;

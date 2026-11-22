@@ -2105,6 +2105,12 @@ namespace BlockBox
         Microsoft.UI.Dispatching.DispatcherQueuePriority.Low,
         UpdateTitleBarDragRegions);
 
+            // 窗口尺寸刚变成 1070×580，标签宽度要立刻按新宽度落好；
+            // 否则 SizeChanged 触发的低优先级更新会带着隐式动画再“长”一次。
+            (this.Content as FrameworkElement)?.UpdateLayout();
+            ApplyTabWidthsWithoutAnimation();
+            MyTabView.UpdateLayout();
+
             WindowFadeController.FadeIn(this);
 
             // 最终补刷一次：分类项、标签、快捷方式卡片等模板要等布局/首帧之后才真正创建，
