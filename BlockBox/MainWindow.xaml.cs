@@ -7792,6 +7792,7 @@ namespace BlockBox
             bool isDefaultAppCategoryView = isCategoryView
                 && _currentCategory is { } currentCategory
                 && IsDefaultApplicationCategory(currentCategory);
+            bool isAllAppsView = isCategoryView && IsAllAppsCategory(_currentCategory);
             bool deletesRecords = isCategoryView;
             // 分类视图里选中的全是应用程序时，用一个 4 按钮确认窗搞定，不再弹后续确认。
             bool allApplications = deletesRecords && shortcuts.All(item => !item.IsFile);
@@ -7804,7 +7805,7 @@ namespace BlockBox
                 {
                     int result = await ShowConfirmationWindowAsync(
                         "删除",
-                        BuildApplicationDeleteDescription(shortcuts, isDefaultAppCategoryView),
+                        BuildApplicationDeleteDescription(shortcuts, isAllAppsView),
                         "删除",
                         secondaryText: "全部删除",
                         tertiaryText: "全部删除并加入排除项");
@@ -7843,7 +7844,7 @@ namespace BlockBox
             }
 
             bool excludePrograms = deleteScope == 3;
-            var defaultCategoryIds = isDefaultAppCategoryView
+            var defaultCategoryIds = isAllAppsView
                 ? BlockBox.Data.CategoryRepository.GetVisible(_currentMode)
                     .Where(IsDefaultApplicationCategory)
                     .Select(category => category.Id)
@@ -7859,19 +7860,20 @@ namespace BlockBox
                         // 全部删除：默认分类 + 自定义分类里的同名程序一起删。
                         RecycleBinRepository.MoveByTargetPath(shortcut.TargetPath);
                     }
-                    else if (isDefaultAppCategoryView)
+                    else if (isAllAppsView)
                     {
-                        // 只删默认分类（全部应用/办公/音乐/游戏）里的记录，保留自定义分类。
+                        // 全部应用：只删 4 个默认分类里的记录，自定义分类保留。
                         RecycleBinRepository.MoveByTargetPathInDefaultCategories(shortcut.TargetPath, defaultCategoryIds);
                     }
                     else
                     {
+                        // 其他分类：只删当前分类这一条。
                         RecycleBinRepository.MoveToRecycleBin(shortcut.Id);
                     }
                 }
                 else
                 {
-                    DeleteShortcutFromCurrentView(shortcut, isDefaultAppCategoryView, deleteAllCategories: false);
+                    DeleteShortcutFromCurrentView(shortcut, isAllAppsView, deleteAllCategories: false);
                 }
 
                 if (excludePrograms)
@@ -7887,13 +7889,15 @@ namespace BlockBox
 
             UpdateEmptyHint();
             UpdateToolbarButtonStates();
+            // 兜底：清掉收藏/最近访问/标签页里指向已删除记录的残留。
+            ShortcutRepository.CleanupAfterShortcutDeletion();
             _ = ShowToastAsync(shortcuts.Count == 1
                 ? LanguageService.TranslateFormat("已删除「{name}」", ("{name}", shortcuts[0].Name))
                 : LanguageService.TranslateFormat("已删除 {count} 项", ("{count}", shortcuts.Count)));
         }
 
         /// <summary>应用删除确认窗的说明文字：四个按钮分别做什么。</summary>
-        private StackPanel BuildApplicationDeleteDescription(List<ShortcutItem> shortcuts, bool isDefaultAppCategoryView)
+        private StackPanel BuildApplicationDeleteDescription(List<ShortcutItem> shortcuts, bool isAllAppsView)
         {
             var panel = new StackPanel { Spacing = 6 };
             panel.Children.Add(new TextBlock
@@ -7914,35 +7918,24 @@ namespace BlockBox
                 });
             }
 
-            AddOption(LanguageService.Translate(isDefaultAppCategoryView
-                ? "删除：只从默认分类（全部应用/办公/音乐/游戏）移除，保留自定义分类中的同名程序。"
-                : "删除：只从当前分类移除，保留其他分类中的同名程序。"));
+            AddOption(LanguageService.Translate(isAllAppsView
+                ? "删除：只从 4 个默认分类（全部应用/游戏/音乐/办公）移除，自定义分类保留。"
+                : "删除：只从当前分类移除，其他分类（含其他默认分类和自定义分类）保留。"));
             AddOption(LanguageService.Translate("全部删除：同时删除所有分类中的同名程序。"));
             AddOption(LanguageService.Translate("全部删除并加入排除项：删除所有分类中的同名程序，并加入排除项，下次扫描不再自动添加。"));
             AddOption(LanguageService.Translate("取消：不做任何修改。"));
             return panel;
         }
 
-        private void DeleteShortcutFromCurrentView(ShortcutItem shortcut, bool isDefaultAppCategoryView = false,
+        private void DeleteShortcutFromCurrentView(ShortcutItem shortcut, bool isAllAppsView = false,
             bool deleteAllCategories = false)
         {
             if (_currentView == ViewKind.Category)
             {
-                if (isDefaultAppCategoryView)
-                {
-                    var defaultCategoryIds = BlockBox.Data.CategoryRepository.GetVisible(_currentMode)
-                        .Where(IsDefaultApplicationCategory)
-                        .Select(category => category.Id)
-                        .ToList();
-                    if (deleteAllCategories)
-                        RecycleBinRepository.MoveByTargetPath(shortcut.TargetPath);
-                    else
-                        RecycleBinRepository.MoveByTargetPathInDefaultCategories(shortcut.TargetPath, defaultCategoryIds);
-                }
+                if (isAllAppsView && deleteAllCategories)
+                    RecycleBinRepository.MoveByTargetPath(shortcut.TargetPath);
                 else
-                {
-                    RecycleBinRepository.MoveToRecycleBin(shortcut.Id);
-                }
+                    RecycleBinRepository.MoveToRecycleBin(shortcut.Id);   // 默认只删当前分类这一条
                 return;
             }
 

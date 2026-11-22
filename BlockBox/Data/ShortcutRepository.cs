@@ -912,6 +912,28 @@ namespace BlockBox.Data
             cmd.CommandText = "DELETE FROM SharedShortcutModeState WHERE NOT EXISTS(SELECT 1 FROM SharedShortcuts s WHERE s.Id=SharedShortcutModeState.ShortcutId)";
             cmd.ExecuteNonQuery();
         }
+
+        /// <summary>
+        /// 删除快捷方式后清理标签/收藏/最近访问的悬空引用：
+        /// 记录本身被删除时，它的收藏/最近访问状态随记录一起消失；
+        /// 这里再兜底清掉指向已不存在记录或已删除标签页的残留。
+        /// </summary>
+        public static void CleanupAfterShortcutDeletion()
+        {
+            using var conn = DatabaseContext.OpenConnection();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = @"
+                DELETE FROM SharedShortcutModeState
+                WHERE NOT EXISTS(SELECT 1 FROM SharedShortcuts s WHERE s.Id=SharedShortcutModeState.ShortcutId);
+
+                UPDATE Shortcuts SET TitleId=''
+                WHERE TitleId<>'' AND NOT EXISTS(SELECT 1 FROM Tabs t WHERE t.Id=Shortcuts.TitleId);
+
+                UPDATE SharedShortcutModeState SET TitleId=''
+                WHERE TitleId<>'' AND NOT EXISTS(SELECT 1 FROM Tabs t WHERE t.Id=SharedShortcutModeState.TitleId);
+            ";
+            cmd.ExecuteNonQuery();
+        }
         public static List<ShortcutItem> GetByTab(AppMode mode, string tabId, SortMode sort = SortMode.Custom)
         {
             string orderBy = sort switch
