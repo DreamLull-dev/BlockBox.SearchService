@@ -1,4 +1,4 @@
-﻿using BlockBox.Helpers;
+using BlockBox.Helpers;
 using BlockBox.Models;
 using Microsoft.Data.Sqlite;
 using System;
@@ -316,6 +316,18 @@ namespace BlockBox.Data
             using (var reader = sharedCmd.ExecuteReader()) while (reader.Read()) list.Add(Read(reader, true));
             return list;
         }
+        /// <summary>是否存在指向同一路径的自定义分类记录（Shortcuts 表，不含共享分类）。</summary>
+        public static bool HasCustomCopiesByTargetPath(string targetPath)
+        {
+            if (string.IsNullOrWhiteSpace(targetPath)) return false;
+            using var conn = DatabaseContext.OpenConnection();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT COUNT(*) FROM Shortcuts WHERE TargetPath=@p COLLATE NOCASE";
+            cmd.Parameters.AddWithValue("@p", targetPath);
+            object? result = cmd.ExecuteScalar();
+            return result is long count && count > 0;
+        }
+
         public static List<ShortcutItem> GetByCategory(string categoryId)
         {
             var list = new List<ShortcutItem>();

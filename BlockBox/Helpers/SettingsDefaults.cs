@@ -40,7 +40,7 @@ namespace BlockBox.Helpers
         public const bool MinimizeToTray = false;
         public const bool RestoreLastTab = true;
         /// <summary>程序启动后自动打开全局搜索面板。</summary>
-        public const bool OpenSearchOnStartup = true;
+        public const bool OpenSearchOnStartup = false;
         /// <summary>从全局搜索添加进分类后，取消结果列表的勾选状态。</summary>
         public const bool ClearSearchSelectionAfterAdd = false;
         public const int CurrentMode = 2;

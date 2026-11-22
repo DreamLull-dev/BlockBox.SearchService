@@ -104,6 +104,10 @@ namespace BlockBox
         private readonly Dictionary<string, Microsoft.UI.Xaml.Media.Imaging.BitmapImage> _thumbnailImageCache = new();
         private bool _closeAnimationStarted;
         private bool _allowWindowClose;
+        /// <summary>
+        /// 用户关闭主窗体时全局搜索窗口还开着：先收进托盘，等搜索窗口也关闭后再真正关闭。
+        /// </summary>
+        private bool _deferredShellClose;
         private TrayIconService? _trayIcon;
         private RecycleBinWindow? _recycleBinWindow;
         private ViewManagementWindow? _viewManagementWindow;
@@ -247,7 +251,7 @@ namespace BlockBox
         private const double BottomBtnSize = 36;   // 按钮尺寸
         private enum EditPanelKind { None, Category, Tab }
         private EditPanelKind _editPanelKind = EditPanelKind.None;
-        private const double BottomBtnPad = 12;   // 展开时左右边距
+        private const double BottomBtnPad = 9;   // 展开时左右边距
         private const double BottomRowY = 48;   // 展开时两个按钮的纵向位置（与收起时"展开按钮"对齐）
         private List<ShortcutItem> _missingFiles = new();
         private Task? _verifyTask;
@@ -364,8 +368,9 @@ namespace BlockBox
 
             _ini = new IniHelper(_iniPath);
             _trayIcon = new TrayIconService(this, _applicationIconPath);
-            _trayIcon.RestoreRequested += (_, _) => _trayIcon.Show();
-            _trayIcon.ShowExistingInstanceRequested += (_, _) => _trayIcon.Show();
+            _trayIcon.RestoreRequested += (_, _) => RestoreMainWindow();
+            _trayIcon.ShowExistingInstanceRequested += (_, _) => RestoreMainWindow();
+            _trayIcon.GlobalSearchRequested += TrayIcon_GlobalSearchRequested;
             _trayIcon.SettingsRequested += TrayIcon_SettingsRequested;
             _trayIcon.MinimizedRequested += MainWindow_MinimizedRequested;
             _trayIcon.ExitRequested += (_, _) =>
@@ -718,31 +723,8 @@ namespace BlockBox
         {
             try
             {
-                string? iconPath = null;
-
-                // 打包应用：从包安装目录找
-                try
-                {
-                    var installPath = Windows.ApplicationModel.Package.Current.InstalledLocation.Path;
-                    iconPath = System.IO.Path.Combine(installPath, "Assets", "AppIcon.ico");
-                }
-                catch
-                {
-                    // 非打包：从程序目录找
-                    iconPath = System.IO.Path.Combine(AppContext.BaseDirectory, "Assets", "AppIcon.ico");
-                }
-
-                if (!string.IsNullOrEmpty(iconPath) && System.IO.File.Exists(iconPath))
-                {
-                    _applicationIconPath = iconPath;
-                    this.AppWindow.SetTaskbarIcon(iconPath);
-                    this.AppWindow.SetTitleBarIcon(iconPath);
-                    System.Diagnostics.Debug.WriteLine($"[图标] 已设置: {iconPath}");
-                }
-                else
-                {
-                    System.Diagnostics.Debug.WriteLine($"[图标] 找不到: {iconPath}");
-                }
+                _applicationIconPath = WindowIconHelper.ResolveAssetPath("AppIcon.ico");
+                WindowIconHelper.Apply(this, _applicationIconPath);
             }
             catch (Exception ex)
             {
@@ -1659,9 +1641,10 @@ namespace BlockBox
         }
 
         private async Task<int> ShowConfirmationWindowAsync(string title, object content,
-            string primaryText, string cancelText = "取消", string? secondaryText = null)
+            string primaryText, string cancelText = "取消", string? secondaryText = null, string? tertiaryText = null)
         {
-            var window = new ConfirmationWindow(title, content, primaryText, cancelText, secondaryText);
+            var window = new ConfirmationWindow(title, content, primaryText, cancelText, secondaryText,
+                tertiaryText: tertiaryText);
             await ModalWindowHelper.ShowModalAsync(this, window);
             return window.Result;
         }
@@ -1765,13 +1748,26 @@ namespace BlockBox
             if (_ini.ReadBool("System", "TrayOnExit", SettingsDefaults.TrayOnExit))
             {
                 args.Cancel = true;
+                _deferredShellClose = false;
                 // 搜索面板是独立窗口：主窗体收进托盘时保持原样，不跟着隐藏/关闭。
                 _trayIcon?.Hide();
                 _trayIcon?.ShowEnteredTrayNotification();
                 return;
             }
 
+            // 未开启“退出后进入托盘”，但全局搜索窗口还开着：按约定只要还有任意一个窗体活着，
+            // 托盘就必须在。托盘图标挂在主窗体的 HWND 上，主窗体一旦真的销毁图标就会消失，
+            // 所以这里先把它收进托盘、暂缓关闭；等搜索窗口也关闭后再完成真正的关闭。
+            if (_globalSearchWindow is not null)
+            {
+                args.Cancel = true;
+                _deferredShellClose = true;
+                _trayIcon?.Hide();
+                return;
+            }
+
             args.Cancel = true;
+            _deferredShellClose = false;
             if (_closeAnimationStarted)
                 return;
 
@@ -2886,9 +2882,23 @@ namespace BlockBox
         private async void SettingsButton_Click(object sender, RoutedEventArgs e)
     => await OpenSettingsAsync();
 
+        /// <summary>从托盘恢复主窗体。用户重新打开主窗体后，之前“等搜索窗口关闭再关闭主窗体”的暂缓作废。</summary>
+        private void RestoreMainWindow()
+        {
+            _deferredShellClose = false;
+            _trayIcon?.Show();
+        }
+
+        private void TrayIcon_GlobalSearchRequested(object? sender, EventArgs e)
+        {
+            // 托盘菜单的命令是在托盘窗口过程里派发的，直接创建/激活窗口容易和菜单收尾撞在一起；
+            // 排到消息队列末尾再执行，行为和点主界面搜索入口保持一致。
+            DispatcherQueue.TryEnqueue(() => ShowGlobalSearchWindow());
+        }
+
         private async void TrayIcon_SettingsRequested(object? sender, EventArgs e)
         {
-            _trayIcon?.Show();
+            RestoreMainWindow();
             await OpenSettingsAsync();
         }
 
@@ -5598,9 +5608,8 @@ namespace BlockBox
         }
 
         private bool IsManualFileAddingDisabled()
-            => (_currentView == ViewKind.Tab
-                && _currentTabItem?.BuiltinKind is BuiltinTabKind.Favorites or BuiltinTabKind.Recent)
-                || (_currentView == ViewKind.Category && IsAllAppsCategory(_currentCategory));
+            => _currentView == ViewKind.Tab
+                && _currentTabItem?.BuiltinKind is BuiltinTabKind.Favorites or BuiltinTabKind.Recent;
 
         private ShortcutItem? GetShortcutFromEventSource(object source)
         {
@@ -6421,14 +6430,14 @@ namespace BlockBox
         private void AnimateBottomButtons(bool expand)
         {
             // 收起状态基准
-            double baseX = (SidebarCollapsedWidth - BottomBtnSize) / 2;
+            double baseX = (SidebarCollapsedWidth - BottomBtnSize) / 2 - 3;
             double sCollapsedY = 4;
             double tCollapsedY = 48;
 
             // 展开状态目标
             double sExpandedX = BottomBtnPad;
             double sExpandedY = BottomRowY;                                        // ⬇ 设置下滑到这里
-            double tExpandedX = SidebarInnerWidth(SidebarExpandedWidth) - BottomBtnSize - BottomBtnPad; // ➡ 展开移到右边
+            double tExpandedX = SidebarInnerWidth(SidebarExpandedWidth) - BottomBtnSize - BottomBtnPad - 3; // ➡ 展开移到右边
             double tExpandedY = BottomRowY;
 
             // 基准位置就是收起位置
@@ -6455,13 +6464,13 @@ namespace BlockBox
         // ============== 无动画：直接把两个按钮"贴到"对应位置（初始化用） ==============
         private void ApplyBottomButtonsState(bool expand)
         {
-            double baseX = (SidebarCollapsedWidth - BottomBtnSize) / 2;
+            double baseX = (SidebarCollapsedWidth - BottomBtnSize) / 2 - 3;
             double sCollapsedY = 4;
             double tCollapsedY = 48;
 
             double sExpandedX = BottomBtnPad;
             double sExpandedY = BottomRowY;
-            double tExpandedX = SidebarInnerWidth(SidebarExpandedWidth) - BottomBtnSize - BottomBtnPad;
+            double tExpandedX = SidebarInnerWidth(SidebarExpandedWidth) - BottomBtnSize - BottomBtnPad - 3;
             double tExpandedY = BottomRowY;
 
             Canvas.SetLeft(SettingsButton, baseX);
@@ -7777,65 +7786,92 @@ namespace BlockBox
 
         private async Task DeleteShortcutsAsync(List<ShortcutItem> shortcuts)
         {
-            bool deleteBackups = false;
+            if (shortcuts.Count == 0) return;
+
             bool isCategoryView = _currentView == ViewKind.Category;
-            bool isAllAppsView = isCategoryView && IsAllAppsCategory(_currentCategory);
+            bool isDefaultAppCategoryView = isCategoryView
+                && _currentCategory is { } currentCategory
+                && IsDefaultApplicationCategory(currentCategory);
             bool deletesRecords = isCategoryView;
+            // 分类视图里选中的全是应用程序时，用一个 4 按钮确认窗搞定，不再弹后续确认。
+            bool allApplications = deletesRecords && shortcuts.All(item => !item.IsFile);
+            bool deleteBackups = false;
+            int deleteScope = 1;   // 1 = 只删当前范围；2 = 全部删除；3 = 全部删除并加入排除项
 
             if (ShouldConfirmDelete())
             {
-                string description = !isCategoryView
-                    ? _currentTabItem?.BuiltinKind switch
-                    {
-                        BuiltinTabKind.Favorites => "确定从收藏中移除选中的项目吗？分类中的卡片不会删除。",
-                        BuiltinTabKind.Recent => "确定从最近访问中移除选中的项目吗？分类中的卡片不会删除。",
-                        _ => "确定从当前标签中移除选中的项目吗？分类中的卡片不会删除。"
-                    }
-                    : isAllAppsView
-                        ? "确定从“全部应用”中删除选中的项目吗？这些项目会从所有分类和标签中删除。"
+                if (allApplications)
+                {
+                    int result = await ShowConfirmationWindowAsync(
+                        "删除",
+                        BuildApplicationDeleteDescription(shortcuts, isDefaultAppCategoryView),
+                        "删除",
+                        secondaryText: "全部删除",
+                        tertiaryText: "全部删除并加入排除项");
+                    if (result == 0) return;
+                    deleteScope = result;
+                }
+                else
+                {
+                    string description = !isCategoryView
+                        ? _currentTabItem?.BuiltinKind switch
+                        {
+                            BuiltinTabKind.Favorites => "确定从收藏中移除选中的项目吗？分类中的卡片不会删除。",
+                            BuiltinTabKind.Recent => "确定从最近访问中移除选中的项目吗？分类中的卡片不会删除。",
+                            _ => "确定从当前标签中移除选中的项目吗？分类中的卡片不会删除。"
+                        }
                         : shortcuts.Count == 1
                             ? LanguageService.TranslateFormat("确定从当前分类中删除「{name}」吗？", ("{name}", shortcuts[0].Name))
                             : LanguageService.TranslateFormat("确定从当前分类中删除选中的 {count} 项吗？", ("{count}", shortcuts.Count));
 
-                description = LanguageService.Translate(description);
+                    description = LanguageService.Translate(description);
 
-                if (isCategoryView && !isAllAppsView && shortcuts.Count == 1 && shortcuts[0].IsShared)
-                {
-                    string catName = ShortcutRepository.GetCategoryName(shortcuts[0].CategoryId);
-                    description += "\n\n" + LanguageService.TranslateFormat("⚠️「{category}」是共享分类，移除后在所有模式中都将不再显示。", ("{category}", LanguageService.Translate(catName)));
+                    if (isCategoryView && !isDefaultAppCategoryView && shortcuts.Count == 1 && shortcuts[0].IsShared)
+                    {
+                        string catName = ShortcutRepository.GetCategoryName(shortcuts[0].CategoryId);
+                        description += "\n\n" + LanguageService.TranslateFormat("⚠️「{category}」是共享分类，移除后在所有模式中都将不再显示。", ("{category}", LanguageService.Translate(catName)));
+                    }
+
+                    int result = await ShowConfirmationWindowAsync(
+                        "删除",
+                        description,
+                        deletesRecords ? "删除记录" : "移除",
+                        secondaryText: deletesRecords ? "删除记录和备份" : null);
+                    if (result == 0) return;
+                    deleteBackups = deletesRecords && result == 2;
                 }
-
-                int result = await ShowConfirmationWindowAsync(
-                    "删除",
-                    description,
-                    deletesRecords ? "删除记录" : "移除",
-                    secondaryText: deletesRecords ? "删除记录和备份" : null);
-                if (result == 0) return;
-                deleteBackups = deletesRecords && result == 2;
             }
 
-            var exclusions = new List<(ShortcutItem Shortcut, string Path)>();
-            if (deletesRecords)
+            bool excludePrograms = deleteScope == 3;
+            foreach (var shortcut in shortcuts)
             {
-                foreach (var shortcut in shortcuts.Where(item => !item.IsFile))
+                if (allApplications)
+                {
+                    if (deleteScope >= 2)
+                    {
+                        // 全部删除：默认分类 + 自定义分类里的同名程序一起删。
+                        RecycleBinRepository.MoveByTargetPath(shortcut.TargetPath);
+                    }
+                    else if (isDefaultAppCategoryView)
+                    {
+                        // 只删 4 个默认分类里的记录，保留自定义分类。
+                        RecycleBinRepository.MoveByTargetPathShared(shortcut.TargetPath);
+                    }
+                    else
+                    {
+                        RecycleBinRepository.MoveToRecycleBin(shortcut.Id);
+                    }
+                }
+                else
+                {
+                    DeleteShortcutFromCurrentView(shortcut, isDefaultAppCategoryView, deleteAllCategories: false);
+                }
+
+                if (excludePrograms)
                 {
                     string? path = ExcludedProgramRepository.GetExecutablePath(shortcut.TargetPath);
                     if (path != null && File.Exists(path))
-                        exclusions.Add((shortcut, path));
-                }
-            }
-            bool excludePrograms = exclusions.Count > 0 && await ShowConfirmationWindowAsync(
-                "排除项", "是否将已删除的有效应用程序加入排除项？加入后，下次扫描不会重新添加这些应用。",
-                "加入排除项", "不加入") == 1;
-
-            foreach (var shortcut in shortcuts)
-            {
-                DeleteShortcutFromCurrentView(shortcut, isAllAppsView);
-                if (excludePrograms)
-                {
-                    var excluded = exclusions.FirstOrDefault(item => ReferenceEquals(item.Shortcut, shortcut));
-                    if (excluded.Shortcut != null)
-                        ExcludedProgramRepository.Add(shortcut, excluded.Path);
+                        ExcludedProgramRepository.Add(shortcut, path);
                 }
                 if (deleteBackups)
                     DeleteBackupIfUnreferenced(shortcut.BackupPath);
@@ -7844,16 +7880,58 @@ namespace BlockBox
 
             UpdateEmptyHint();
             UpdateToolbarButtonStates();
+            _ = ShowToastAsync(shortcuts.Count == 1
+                ? LanguageService.TranslateFormat("已删除「{name}」", ("{name}", shortcuts[0].Name))
+                : LanguageService.TranslateFormat("已删除 {count} 项", ("{count}", shortcuts.Count)));
         }
 
-        private void DeleteShortcutFromCurrentView(ShortcutItem shortcut, bool isAllAppsView = false)
+        /// <summary>应用删除确认窗的说明文字：四个按钮分别做什么。</summary>
+        private StackPanel BuildApplicationDeleteDescription(List<ShortcutItem> shortcuts, bool isDefaultAppCategoryView)
+        {
+            var panel = new StackPanel { Spacing = 6 };
+            panel.Children.Add(new TextBlock
+            {
+                Text = shortcuts.Count == 1
+                    ? LanguageService.TranslateFormat("确定删除「{name}」吗？", ("{name}", shortcuts[0].Name))
+                    : LanguageService.TranslateFormat("确定删除选中的 {count} 个程序吗？", ("{count}", shortcuts.Count)),
+                TextWrapping = TextWrapping.Wrap
+            });
+
+            void AddOption(string text)
+            {
+                panel.Children.Add(new TextBlock
+                {
+                    Text = text,
+                    TextWrapping = TextWrapping.Wrap,
+                    Opacity = 0.75
+                });
+            }
+
+            AddOption(LanguageService.Translate(isDefaultAppCategoryView
+                ? "删除：只从默认分类（全部应用/办公/音乐/游戏）移除，保留自定义分类中的同名程序。"
+                : "删除：只从当前分类移除，保留其他分类中的同名程序。"));
+            AddOption(LanguageService.Translate("全部删除：同时删除所有分类中的同名程序。"));
+            AddOption(LanguageService.Translate("全部删除并加入排除项：删除所有分类中的同名程序，并加入排除项，下次扫描不再自动添加。"));
+            AddOption(LanguageService.Translate("取消：不做任何修改。"));
+            return panel;
+        }
+
+        private void DeleteShortcutFromCurrentView(ShortcutItem shortcut, bool isDefaultAppCategoryView = false,
+            bool deleteAllCategories = false)
         {
             if (_currentView == ViewKind.Category)
             {
-                if (isAllAppsView)
-                    RecycleBinRepository.MoveByTargetPath(shortcut.TargetPath);
+                if (isDefaultAppCategoryView)
+                {
+                    if (deleteAllCategories)
+                        RecycleBinRepository.MoveByTargetPath(shortcut.TargetPath);
+                    else
+                        RecycleBinRepository.MoveByTargetPathShared(shortcut.TargetPath);
+                }
                 else
+                {
                     RecycleBinRepository.MoveToRecycleBin(shortcut.Id);
+                }
                 return;
             }
 
@@ -7921,11 +7999,15 @@ namespace BlockBox
         {
             if (IsManualFileAddingDisabled()) return;
 
+            // 全部应用 / 办公 / 音乐 / 游戏：只能添加应用程序，新建文档入口置灰。
+            bool applicationsOnly = _currentView == ViewKind.Category
+                && IsDefaultApplicationCategory(_currentCategory);
+
             var menu = new MenuFlyout();
-            AddCreateFileMenuItem(menu, "新建 Text", NewFileKind.Text, "\uE8A5");
-            AddCreateFileMenuItem(menu, "新建 Word", NewFileKind.Word, "\uE8A5");
-            AddCreateFileMenuItem(menu, "新建 PPT", NewFileKind.PowerPoint, "\uE786");
-            AddCreateFileMenuItem(menu, "新建 Excel", NewFileKind.Excel, "\uE9F9");
+            AddCreateFileMenuItem(menu, "新建 Text", NewFileKind.Text, "\uE8A5", enabled: !applicationsOnly);
+            AddCreateFileMenuItem(menu, "新建 Word", NewFileKind.Word, "\uE8A5", enabled: !applicationsOnly);
+            AddCreateFileMenuItem(menu, "新建 PPT", NewFileKind.PowerPoint, "\uE786", enabled: !applicationsOnly);
+            AddCreateFileMenuItem(menu, "新建 Excel", NewFileKind.Excel, "\uE9F9", enabled: !applicationsOnly);
             menu.Items.Add(new MenuFlyoutSeparator());
 
             var addFile = new MenuFlyoutItem
@@ -7943,12 +8025,13 @@ namespace BlockBox
             });
         }
 
-        private void AddCreateFileMenuItem(MenuFlyout menu, string text, NewFileKind kind, string glyph)
+        private void AddCreateFileMenuItem(MenuFlyout menu, string text, NewFileKind kind, string glyph, bool enabled = true)
         {
             var item = new MenuFlyoutItem
             {
                 Text = text,
-                Icon = new FontIcon { Glyph = glyph }
+                Icon = new FontIcon { Glyph = glyph },
+                IsEnabled = enabled
             };
             item.Click += async (_, _) => await CreateNewDocumentAsync(kind);
             menu.Items.Add(item);
@@ -7993,8 +8076,8 @@ namespace BlockBox
             }
             if (IsAllAppsCategory(cat))
             {
-                await ShowMessageAsync("“全部应用”分类不支持手动添加文件。");
-                return null;
+                // “全部应用”现在也允许手动添加，但只接受应用程序（由 BatchAddShortcutsAsync 的类型校验兜底）。
+                return cat;
             }
             if (cat.IsShared && !IsDefaultApplicationCategory(cat))
             {
@@ -8009,6 +8092,13 @@ namespace BlockBox
         {
             var cat = await GetFileOperationCategoryAsync();
             if (cat == null) return;
+
+            // 默认分类只能添加应用程序；菜单项虽已置灰，这里再兜一层（快捷键/其它入口）。
+            if (IsDefaultApplicationCategory(cat))
+            {
+                await ShowMessageAsync(LanguageService.Translate("默认分类只能添加应用程序。"));
+                return;
+            }
 
             var (baseName, extension) = kind switch
             {
@@ -8069,6 +8159,7 @@ namespace BlockBox
 
             int added = 0, rejected = 0, duplicated = 0;
             var dupNames = new List<string>();
+            var addedNames = new List<string>();
 
             foreach (var path in paths)
             {
@@ -8093,10 +8184,18 @@ namespace BlockBox
                 {
                     added++;
                     existing.Add(path);
+                    addedNames.Add(System.IO.Path.GetFileNameWithoutExtension(path));
                 }
             }
 
             UpdateEmptyHint();
+
+            if (added > 0)
+            {
+                _ = ShowToastAsync(added == 1
+                    ? LanguageService.TranslateFormat("已成功添加「{name}」", ("{name}", addedNames[0]))
+                    : LanguageService.TranslateFormat("已成功添加 {count} 项", ("{count}", added)));
+            }
 
             var msgs = new List<string>();
             if (added > 0) msgs.Add(LanguageService.TranslateFormat("已添加 {count} 个", ("{count}", added)));
@@ -9360,9 +9459,8 @@ namespace BlockBox
             if (!string.IsNullOrEmpty(item.IconPath) && System.IO.File.Exists(item.IconPath))
                 return item.IconPath;
 
-            if (item.IsShared)
-                return null;
-
+            // 共享分类（全部应用/办公/音乐/游戏）里手动拖入的程序没有 IconPath，
+            // 这里回退到真实文件路径走 Shell 图标；UWP 的 shell:AppsFolder 伪路径在下面被排除。
             // ⭐ UWP 的 TargetPath 不是真实文件路径，跳过
             if (!string.IsNullOrEmpty(item.TargetPath)
                 && !item.TargetPath.StartsWith("shell:AppsFolder\\", StringComparison.OrdinalIgnoreCase)
@@ -10123,6 +10221,26 @@ namespace BlockBox
                 {
                     await ShowMessageAsync("请先选择一个分类");
                     return;
+                }
+
+                // 全部应用 / 办公 / 音乐 / 游戏：只接受应用程序，非程序给出明确提示。
+                if (IsDefaultApplicationCategory(cat))
+                {
+                    var applications = paths
+                        .Where(path => BlockBox.Helpers.ContentKindHelper.IsApplication(path))
+                        .ToList();
+                    if (applications.Count == 0)
+                    {
+                        await ShowMessageAsync(LanguageService.Translate("默认分类只能添加应用程序。"));
+                        return;
+                    }
+                    if (applications.Count < paths.Count)
+                    {
+                        _ = ShowResultMessageAsync(
+                            LanguageService.Translate("默认分类只能添加应用程序，已忽略其中的非程序文件。"),
+                            hasWarnings: true);
+                    }
+                    paths = applications;
                 }
 
                 // 复用你已有的批量添加逻辑

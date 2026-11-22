@@ -15,7 +15,7 @@ namespace BlockBox.Views
         public int Result { get; private set; }
 
         public ConfirmationWindow(string title, object content, string primaryText, string? cancelText = "取消",
-            string? secondaryText = null, int defaultResult = 0, Window? centerOwner = null)
+            string? secondaryText = null, int defaultResult = 0, Window? centerOwner = null, string? tertiaryText = null)
         {
             InitializeComponent();
             _centerOwner = centerOwner;
@@ -34,6 +34,11 @@ namespace BlockBox.Views
             {
                 SecondaryButton.Content = LanguageService.Translate(secondaryText);
                 SecondaryButton.Visibility = Visibility.Visible;
+            }
+            if (!string.IsNullOrWhiteSpace(tertiaryText))
+            {
+                TertiaryButton.Content = LanguageService.Translate(tertiaryText);
+                TertiaryButton.Visibility = Visibility.Visible;
             }
             Result = defaultResult;
 
@@ -56,7 +61,9 @@ namespace BlockBox.Views
                 }
 
                 double scale = RootGrid.XamlRoot?.RasterizationScale ?? 1.0;
-                int width = (int)(520 * scale);
+                // 四按钮（含“全部删除并加入排除项”）时加宽，避免长按钮换行/挤压。
+                bool hasTertiary = TertiaryButton.Visibility == Visibility.Visible;
+                int width = (int)((hasTertiary ? 680 : 520) * scale);
                 int height = (int)(Math.Clamp(RootGrid.ActualHeight + 48, 220, 560) * scale);
                 AppWindow.Resize(new SizeInt32(width, height));
                 ModalWindowHelper.CenterOnOwner(_centerOwner ?? App.MainWindow, this);
@@ -78,6 +85,12 @@ namespace BlockBox.Views
         private void SecondaryButton_Click(object sender, RoutedEventArgs e)
         {
             Result = 2;
+            WindowFadeController.CloseWithAnimation(this);
+        }
+
+        private void TertiaryButton_Click(object sender, RoutedEventArgs e)
+        {
+            Result = 3;
             WindowFadeController.CloseWithAnimation(this);
         }
 

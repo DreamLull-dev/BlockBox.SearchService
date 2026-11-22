@@ -70,7 +70,8 @@ namespace BlockBox.Views
 
         public GlobalSearchWindow(AppMode mode)
         {
-            InitializeComponent(); _mode = mode; ResultsList.ItemsSource = Results;
+            InitializeComponent();
+            _mode = mode; ResultsList.ItemsSource = Results;
             _thumbnailPreviewTimer = DispatcherQueue.CreateTimer();
             _thumbnailPreviewTimer.Interval = TimeSpan.FromMilliseconds(200);
             _thumbnailPreviewTimer.IsRepeating = false;
@@ -82,6 +83,9 @@ namespace BlockBox.Views
             // 反过来的话，后设置样式的代码会让窗口短暂地以不透明状态绘制一帧，表现为闪烁。
             WindowAcrylicHelper.Apply(this);
             ModalWindowHelper.ConfigureCloseOnlyTitleBar(this);
+            // 标题栏样式设置完之后再挂图标：搜索面板是独立顶层窗口，任务栏缩略图/Alt-Tab
+            // 的图标取自窗口自身，不设置就会退化成系统默认图标。
+            ApplyWindowIcon();
             if (AppWindow.Presenter is OverlappedPresenter presenter)
             {
                 presenter.IsResizable = true;
@@ -108,6 +112,19 @@ namespace BlockBox.Views
             _isInitialized = true;
             AddButton.IsEnabled = false;
             _ = RefreshServiceStatusAsync();
+        }
+
+        /// <summary>
+        /// 使用专用的搜索图标（圆角蓝底 + 放大镜），任务栏预览左上角不再是系统默认图标。
+        /// 图标为项目自绘资源，不涉及字体/素材授权问题。
+        /// </summary>
+        private void ApplyWindowIcon()
+        {
+            if (WindowIconHelper.Apply(this, WindowIconHelper.ResolveAssetPath("GlobalSearchIcon.ico")))
+                return;
+
+            // 搜索图标资源缺失（例如旧包未带上 Assets）时退回主窗体图标，至少不再是系统默认图标。
+            WindowIconHelper.Apply(this, WindowIconHelper.ResolveAssetPath("AppIcon.ico"));
         }
 
         /// <summary>
@@ -186,20 +203,32 @@ namespace BlockBox.Views
             var bounds = main.AppWindow.Position;
             var size = main.AppWindow.Size;
             const int width = 380;
-            AppWindow.Resize(new SizeInt32(width, size.Height));
+            // 主窗体收在托盘里（不可见）时，系统给的尺寸/坐标可能是最小化后的占位值（例如 -32000），
+            // 继续按“贴在它右侧”算会把面板推到屏幕外。高度不合法时退回主窗体的默认高度。
+            bool mainVisible = main.AppWindow.IsVisible;
+            int height = size.Height >= 320 ? size.Height : 580;
+            AppWindow.Resize(new SizeInt32(width, height));
 
             int x = bounds.X + size.Width;
             int y = bounds.Y;
-            // 默认贴在主窗体右侧；右侧放不下时贴着屏幕工作区的最右边，纵向也保证不出屏。
-            var display = DisplayArea.GetFromPoint(
-                    new PointInt32(bounds.X + size.Width / 2, bounds.Y + size.Height / 2),
-                    DisplayAreaFallback.Primary)
-                ?? DisplayArea.GetFromWindowId(main.AppWindow.Id, DisplayAreaFallback.Primary);
+            // 默认贴在主窗体右侧；主窗体不可见（托盘“显示全局搜索”）时改为贴它所在显示器的右边，
+            // 两种情况下都把面板钳回工作区，纵向也保证不出屏。
+            var display = mainVisible
+                ? DisplayArea.GetFromPoint(
+                      new PointInt32(bounds.X + size.Width / 2, bounds.Y + size.Height / 2),
+                      DisplayAreaFallback.Primary)
+                  ?? DisplayArea.GetFromWindowId(main.AppWindow.Id, DisplayAreaFallback.Primary)
+                : DisplayArea.GetFromWindowId(main.AppWindow.Id, DisplayAreaFallback.Primary);
             if (display is not null)
             {
                 var work = display.WorkArea;
+                if (!mainVisible)
+                {
+                    x = work.X + work.Width - width - 16;
+                    y = work.Y + Math.Max(16, work.Height / 6);
+                }
                 x = Math.Clamp(x, work.X, Math.Max(work.X, work.X + work.Width - width));
-                y = Math.Clamp(y, work.Y, Math.Max(work.Y, work.Y + work.Height - size.Height));
+                y = Math.Clamp(y, work.Y, Math.Max(work.Y, work.Y + work.Height - height));
             }
             AppWindow.Move(new PointInt32(x, y));
         }

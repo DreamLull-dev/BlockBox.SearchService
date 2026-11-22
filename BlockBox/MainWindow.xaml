@@ -379,7 +379,7 @@
         HorizontalAlignment="Stretch"
         VerticalAlignment="Bottom">
                             <Button x:Name="SettingsButton"
-            Canvas.Left="13"
+            Canvas.Left="9"
             Canvas.Top="4"
              Width="36" Height="36"
                                 CornerRadius="16"
@@ -395,7 +395,7 @@
                                 <FontIcon Glyph="&#xE713;" FontSize="16"/>
                             </Button>
                             <Button x:Name="ToggleSidebarButton"
-            Canvas.Left="13"
+            Canvas.Left="9"
             Canvas.Top="48"
              Width="36" Height="36"
                                 CornerRadius="16"

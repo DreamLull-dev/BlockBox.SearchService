@@ -44,6 +44,7 @@ namespace BlockBox.Helpers
         private const uint MenuExit = 1002;
         private const uint MenuHide = 1003;
         private const uint MenuSettings = 1004;
+        private const uint MenuGlobalSearch = 1005;
 
         private readonly Window _window;
         private readonly IntPtr _hwnd;
@@ -59,6 +60,7 @@ namespace BlockBox.Helpers
         public event EventHandler? MinimizedRequested;
         public event EventHandler? ExitRequested;
         public event EventHandler? SettingsRequested;
+        public event EventHandler? GlobalSearchRequested;
         public event EventHandler? ShowExistingInstanceRequested;
 
         public TrayIconService(Window window, string? iconPath = null)
@@ -160,6 +162,8 @@ namespace BlockBox.Helpers
                 }
                 else if (command == MenuSettings)
                     SettingsRequested?.Invoke(this, EventArgs.Empty);
+                else if (command == MenuGlobalSearch)
+                    GlobalSearchRequested?.Invoke(this, EventArgs.Empty);
                 return IntPtr.Zero;
             }
 
@@ -177,11 +181,12 @@ namespace BlockBox.Helpers
 
             try
             {
-                AppendMenu(menu, MfString, MenuShow, "显示 BlockBox");
-                AppendMenu(menu, MfString, MenuSettings, "设置");
+                AppendMenu(menu, MfString, MenuShow, LanguageService.Translate("显示 BlockBox"));
+                AppendMenu(menu, MfString, MenuGlobalSearch, LanguageService.Translate("显示全局搜索"));
+                AppendMenu(menu, MfString, MenuSettings, LanguageService.Translate("设置"));
                 uint hideMenuFlags = IsWindowVisible(_hwnd) ? MfString : MfString | MfGrayed;
-                AppendMenu(menu, hideMenuFlags, MenuHide, "隐藏 BlockBox 界面");
-                AppendMenu(menu, MfString, MenuExit, "退出");
+                AppendMenu(menu, hideMenuFlags, MenuHide, LanguageService.Translate("隐藏 BlockBox 界面"));
+                AppendMenu(menu, MfString, MenuExit, LanguageService.Translate("退出"));
                 GetCursorPos(out POINT point);
                 SetForegroundWindow(_hwnd);
                 uint alignment = IsCursorInRightHalf(point) ? TpmRightAlign : TpmLeftAlign;
@@ -204,6 +209,8 @@ namespace BlockBox.Helpers
                     ExitRequested?.Invoke(this, EventArgs.Empty);
                 else if (command == MenuSettings)
                     SettingsRequested?.Invoke(this, EventArgs.Empty);
+                else if (command == MenuGlobalSearch)
+                    GlobalSearchRequested?.Invoke(this, EventArgs.Empty);
                 PostMessage(_hwnd, 0, IntPtr.Zero, IntPtr.Zero);
             }
             finally

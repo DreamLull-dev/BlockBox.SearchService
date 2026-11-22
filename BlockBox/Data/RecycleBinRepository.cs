@@ -82,6 +82,15 @@ namespace BlockBox.Data
             return MoveIds(ids);
         }
 
+        /// <summary>
+        /// 只把共享分类（全部应用/办公/音乐/游戏）里的同名记录移入回收站，保留用户自定义分类里的记录。
+        /// </summary>
+        public static int MoveByTargetPathShared(string targetPath)
+        {
+            var ids = GetIds("SELECT Id FROM SharedShortcuts WHERE TargetPath=@value COLLATE NOCASE", targetPath);
+            return MoveIds(ids);
+        }
+
         public static int MoveByCategory(string categoryId)
         {
             var ids = GetIds("SELECT Id FROM Shortcuts WHERE CategoryId=@value UNION SELECT Id FROM SharedShortcuts WHERE CategoryId=@value", categoryId);

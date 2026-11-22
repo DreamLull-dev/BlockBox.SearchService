@@ -1,3 +1,4 @@
+using BlockBox.Helpers;
 using BlockBox.Views;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Media;
@@ -35,7 +36,7 @@ namespace BlockBox
 
         internal void ShowSearchLauncher()
         {
-            if (_searchLauncherShown) return;
+            if (_searchLauncherShown || IsShellClosed) return;
             _searchLauncherShown = true;
             // 展开前先把宿主裁成 0 宽，避免第一帧（还没测量）时按钮画到 ModeSwitcher 上。
             SearchLauncherHost.Width = 0;
@@ -135,6 +136,30 @@ namespace BlockBox
             if (!ReferenceEquals(sender, _globalSearchWindow)) return;
             _globalSearchWindow = null;
             ShowSearchLauncher();
+            // 主窗体之前可能因为搜索面板还开着而暂缓关闭（见 MainWindow_AppWindowClosing）。
+            // 现在两个窗体都关了，才真正关闭主窗体：托盘图标随之移除，进程退出。
+            CompleteDeferredShellClose();
+        }
+
+        /// <summary>
+        /// 完成因全局搜索窗口仍在运行而被暂缓的主窗体关闭。“退出后进入托盘”只在两个窗体都
+        /// 关闭后才失效——只要还有一个窗体在，托盘菜单就必须留着。
+        /// </summary>
+        private void CompleteDeferredShellClose()
+        {
+            if (!_deferredShellClose) return;
+            _deferredShellClose = false;
+
+            // 等待期间用户可能又把“退出后进入托盘”打开了，那就继续留在托盘里。
+            if (_ini.ReadBool("System", "TrayOnExit", SettingsDefaults.TrayOnExit))
+                return;
+
+            // 从搜索窗体的 Closed 里直接关主窗体容易和窗口销毁流程重入，排到下一轮消息再关。
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                _allowWindowClose = true;
+                Close();
+            });
         }
     }
 }

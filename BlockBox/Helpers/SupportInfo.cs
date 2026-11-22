@@ -8,13 +8,13 @@ namespace BlockBox.Helpers
     internal static class SupportInfo
     {
         /// <summary>反馈邮箱（也会用于“发送邮件”按钮）。</summary>
-        internal const string Email = "you@example.com";
+        internal const string Email = "910755801@qq.com";
 
         /// <summary>项目主页 / 反馈仓库地址，留空则不显示。</summary>
-        internal const string GitHubUrl = "";
+        internal const string GitHubUrl = "https://github.com/DreamLull-dev/BlockBox.SearchService";
 
         /// <summary>Microsoft Store 产品 ID（发布后在合作伙伴中心可以查到），留空则隐藏商店入口。</summary>
-        internal const string StoreProductId = "";
+        internal const string StoreProductId = "9PKWRMXZ193V";
 
         /// <summary>伴侣 MSIX（搜索服务）的下载页面。</summary>
         internal const string ServiceDownloadUrl = "https://github.com/DreamLull-dev/BlockBox.SearchService/releases/latest";

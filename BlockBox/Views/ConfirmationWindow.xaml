@@ -24,6 +24,11 @@
                     Height="32"
                     CornerRadius="15"
                      Visibility="Collapsed" Click="SecondaryButton_Click" />
+            <Button x:Name="TertiaryButton"
+                    MinWidth="140"
+                    Height="32"
+                    CornerRadius="15"
+                     Visibility="Collapsed" Click="TertiaryButton_Click" />
             <Button x:Name="PrimaryButton"
                     MinWidth="80"
                     Height="32"

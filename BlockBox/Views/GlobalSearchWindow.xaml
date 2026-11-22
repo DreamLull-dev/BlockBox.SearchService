@@ -7,7 +7,13 @@
     <Grid x:Name="RootGrid" Padding="4" RowSpacing="5" Background="Transparent" SizeChanged="RootGrid_SizeChanged" Tapped="RootGrid_Tapped">
         <Grid.RowDefinitions><RowDefinition Height="38"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
         <Grid x:Name="DragRegion" Background="Transparent" Tag="SkipGlobalFontSize">
-            <TextBlock Text="全局搜索" Margin="2,-8,0,0" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center" IsHitTestVisible="False"/>
+            <StackPanel Orientation="Horizontal" Spacing="6" Margin="2,-8,0,0"
+                        VerticalAlignment="Center" IsHitTestVisible="False">
+                <!-- 与搜索框使用同一个 WinUI 自带搜索字形，标题栏一眼能看出是全局搜索 -->
+                <FontIcon Glyph="&#xE721;" FontSize="13" VerticalAlignment="Center"
+                          Foreground="{ThemeResource TextFillColorPrimaryBrush}"/>
+                <TextBlock Text="全局搜索" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center"/>
+            </StackPanel>
         </Grid>
         <Grid Grid.Row="1" ColumnSpacing="8">
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="110"/></Grid.ColumnDefinitions>
