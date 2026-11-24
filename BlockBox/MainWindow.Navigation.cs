@@ -1103,14 +1103,25 @@ namespace BlockBox
 
             // 保存
             BlockBox.Data.TabRepository.Update(item.Id, result.Title, result.Note, result.Icon, result.Kind, result.ExtList);
+
+            // 先让数据库新记录替换集合项（悬停菜单/数据立即变新名），再刷新旧 Header 的绑定。
+            LoadTabsFromDb();
+
             item.Title = result.Title;
             item.Note = result.Note;
             item.IconGlyph = result.Icon;
             item.ContentKind = result.Kind;
             item.ExtensionList = result.ExtList;
+            item.RefreshLocalizedTitle();
 
-            LoadTabsFromDb();
-            MyTabView.SelectedItem = TabItems.FirstOrDefault(t => t.Id == item.Id);
+            var updated = TabItems.FirstOrDefault(t => t.Id == item.Id);
+            if (updated != null)
+            {
+                updated.RefreshLocalizedTitle();
+                RefreshTabHeader(updated);
+                MyTabView.SelectedItem = updated;
+            }
+            MyTabView.UpdateLayout();
         }
 
         private async Task DeleteTabAsync(MyTabItem item)
