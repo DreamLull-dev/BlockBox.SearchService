@@ -44,6 +44,18 @@ namespace BlockBox.Views
             // 菜单固定使用深色文字，清晰可读。
             WindowAcrylicHelper.ApplyBackdropOnly(this);
             ModalWindowHelper.ConfigureBorderlessWindow(this);
+
+            // 置顶：Windows 的托盘溢出面板也是 topmost 窗口，不置顶就会被它盖住。
+            try
+            {
+                if (AppWindow.Presenter is OverlappedPresenter presenter)
+                    presenter.IsAlwaysOnTop = true;
+            }
+            catch
+            {
+                // 个别系统/演示模式下不支持 IsAlwaysOnTop，下面再用 SetWindowPos 兜底。
+            }
+
             WindowFadeController.Prepare(this);
             ApplyThemeHoverResources();
 
@@ -59,6 +71,7 @@ namespace BlockBox.Views
 
             // 先给一个足够高的临时尺寸；Loaded 时再按实际内容高度收缩，避免底部文字被裁。
             MoveMenu((int)(WidthDip * scale), (int)(ProvisionalHeightDip * scale));
+            ForceTopmost(hwnd);
 
             Activated += TrayMenuWindow_Activated;
             Closed += (_, _) => _result.TrySetResult(_pending);
@@ -150,6 +163,28 @@ namespace BlockBox.Views
 
         [DllImport("user32.dll")]
         private static extern uint GetDpiForWindow(IntPtr hwnd);
+
+        private static readonly IntPtr HwndTopmost = new(-1);
+        private const uint SwpNoSize = 0x0001;
+        private const uint SwpNoMove = 0x0002;
+        private const uint SwpNoActivate = 0x0010;
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool SetWindowPos(IntPtr hwnd, IntPtr insertAfter,
+            int x, int y, int cx, int cy, uint flags);
+
+        private static void ForceTopmost(IntPtr hwnd)
+        {
+            try
+            {
+                SetWindowPos(hwnd, HwndTopmost, 0, 0, 0, 0,
+                    SwpNoSize | SwpNoMove | SwpNoActivate);
+            }
+            catch
+            {
+                // 置顶失败也不影响菜单本身显示。
+            }
+        }
 
         private const int GwlExStyle = -20;
         private const int WsExToolWindow = 0x00000080;
