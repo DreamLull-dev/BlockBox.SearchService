@@ -1368,11 +1368,25 @@ namespace BlockBox.Views
             for (int attempt = 0; attempt < 60; attempt++)
             {
                 await Task.Delay(1000);
-                if (SearchServiceController.QueryState() == SearchServiceState.Running)
+
+                if (SearchServiceController.QueryState() != SearchServiceState.Running)
+                    continue;
+
+                // SCM 显示 Running 只代表进程起来了，服务可能还在加载 564MB 索引、没开始监听管道。
+                // 这里额外确认管道真的能响应，否则第一次搜索会连接失败，页面看起来一直“正在启动”。
+                try
                 {
-                    HideServicePanel();
-                    Search();
-                    return;
+                    var response = await _searchClient.SendAsync("status");
+                    if (response.Status == "ok")
+                    {
+                        HideServicePanel();
+                        Search();
+                        return;
+                    }
+                }
+                catch (Exception ex) when (ex is IOException or TimeoutException or System.UnauthorizedAccessException or InvalidOperationException)
+                {
+                    // 管道还没就绪，继续下一轮。
                 }
             }
             StatusText.Text = LanguageService.Translate("安装未完成，请安装搜索服务后再试。");

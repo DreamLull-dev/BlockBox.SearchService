@@ -4082,14 +4082,15 @@ namespace BlockBox
 
             // 保存修改
             BlockBox.Data.TabRepository.Update(item.Id, result.Title, result.Note, result.Icon, result.Kind, result.ExtList);
-            item.Title = result.Title;
-            item.Note = result.Note;
-            item.IconGlyph = result.Icon;              // ⭐
-            item.ContentKind = result.Kind;
-            item.ExtensionList = result.ExtList;
 
-            LoadTabsFromDb();   // 让 TabView 重画标题
-            MyTabView.SelectedItem = TabItems.FirstOrDefault(t => t.Id == item.Id);
+            // 不要先改 item 的字段：那样 LoadTabsFromDb 会认为“数据没变”而不替换集合项，
+            // TabView 的表头仍指向旧对象，标题就不会刷新。让数据库里的新记录替换旧项。
+            LoadTabsFromDb();
+
+            var updated = TabItems.FirstOrDefault(t => t.Id == item.Id);
+            if (updated != null)
+                MyTabView.SelectedItem = updated;
+            MyTabView.UpdateLayout();
         }
 
         private void ClearSearchButton_Click(object sender, RoutedEventArgs e)
