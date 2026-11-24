@@ -4083,15 +4083,22 @@ namespace BlockBox
             // 保存修改
             BlockBox.Data.TabRepository.Update(item.Id, result.Title, result.Note, result.Icon, result.Kind, result.ExtList);
 
-            // 不要先改 item 的字段：那样 LoadTabsFromDb 会认为“数据没变”而不替换集合项，
-            // TabView 的表头仍指向旧对象，标题就不会刷新。让数据库里的新记录替换旧项。
+            // 让数据库里的新记录替换集合项；集合项变了，悬停菜单/数据才是新名字。
             LoadTabsFromDb();
+
+            // 兼容 TabView 仍缓存旧 Header 的情况：旧对象本身也发一次 DisplayTitle 变更通知，
+            // 绑定在旧对象上的表头文字会立刻更新。
+            item.Title = result.Title;
+            item.Note = result.Note;
+            item.IconGlyph = result.Icon;
+            item.ContentKind = result.Kind;
+            item.ExtensionList = result.ExtList;
+            item.RefreshLocalizedTitle();
 
             var updated = TabItems.FirstOrDefault(t => t.Id == item.Id);
             if (updated != null)
             {
-                // TabView 的表头是 OneTime 绑定，集合替换后容器可能还显示旧 Header；
-                // 显式刷新一次，悬停菜单和新标签名才会一致。
+                updated.RefreshLocalizedTitle();
                 RefreshTabHeader(updated);
                 MyTabView.SelectedItem = updated;
             }
