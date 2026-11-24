@@ -4080,29 +4080,23 @@ namespace BlockBox
 
             if (!result.IsConfirmed) return;
 
-            // 保存修改
+            // 保存修改：原地更新，不重建 TabView 容器，避免标签消失/选中条滑动
+            bool filterChanged = item.ContentKind != result.Kind
+                || !string.Equals(item.ExtensionList, result.ExtList, StringComparison.OrdinalIgnoreCase);
+
             BlockBox.Data.TabRepository.Update(item.Id, result.Title, result.Note, result.Icon, result.Kind, result.ExtList);
 
-            // 让数据库里的新记录替换集合项；集合项变了，悬停菜单/数据才是新名字。
-            LoadTabsFromDb();
-
-            // 兼容 TabView 仍缓存旧 Header 的情况：旧对象本身也发一次 DisplayTitle 变更通知，
-            // 绑定在旧对象上的表头文字会立刻更新。
-            item.Title = result.Title;
+            item.Title = result.Title;          // setter 会通知 DisplayTitle
             item.Note = result.Note;
-            item.IconGlyph = result.Icon;
+            item.IconGlyph = result.Icon;       // setter 会通知图标绑定
             item.ContentKind = result.Kind;
             item.ExtensionList = result.ExtList;
             item.RefreshLocalizedTitle();
 
-            var updated = TabItems.FirstOrDefault(t => t.Id == item.Id);
-            if (updated != null)
-            {
-                updated.RefreshLocalizedTitle();
-                RefreshTabHeader(updated);
-                MyTabView.SelectedItem = updated;
-            }
-            MyTabView.UpdateLayout();
+            UpdateEmptyHint();
+            if (filterChanged)
+                LoadShortcutsFromDb();
+            MyTabView.SelectedItem = item;
         }
 
         private void ClearSearchButton_Click(object sender, RoutedEventArgs e)

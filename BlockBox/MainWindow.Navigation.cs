@@ -184,28 +184,6 @@ namespace BlockBox
             }
         }
 
-        /// <summary>
-        /// TabView 的 Header 是 OneTime x:Bind；集合项被替换后容器可能还显示旧 Header。
-        /// 先尝试直接改 Header；如果容器没刷新，就把集合项移除再插回，强制重建容器。
-        /// </summary>
-        private void RefreshTabHeader(MyTabItem item)
-        {
-            int index = TabItems.IndexOf(item);
-            if (index < 0) return;
-
-            MyTabView.UpdateLayout();
-            if (MyTabView.ContainerFromIndex(index) is TabViewItem container)
-            {
-                container.Header = item;
-                container.UpdateLayout();
-            }
-
-            // 最可靠：移除再插回，TabView 会重新套用 TabItemTemplate，Header 一定指向新对象。
-            TabItems.RemoveAt(index);
-            TabItems.Insert(index, item);
-            MyTabView.UpdateLayout();
-        }
-
         private static bool IsSameTabIdentity(MyTabItem left, MyTabItem right)
         {
             if (left.BuiltinKind != BuiltinTabKind.None || right.BuiltinKind != BuiltinTabKind.None)
@@ -1101,11 +1079,11 @@ namespace BlockBox
 
             if (!result.IsConfirmed) return;
 
-            // 保存
-            BlockBox.Data.TabRepository.Update(item.Id, result.Title, result.Note, result.Icon, result.Kind, result.ExtList);
+            // 保存：原地更新，不重建 TabView 容器，避免标签消失/选中条滑动
+            bool filterChanged = item.ContentKind != result.Kind
+                || !string.Equals(item.ExtensionList, result.ExtList, StringComparison.OrdinalIgnoreCase);
 
-            // 先让数据库新记录替换集合项（悬停菜单/数据立即变新名），再刷新旧 Header 的绑定。
-            LoadTabsFromDb();
+            BlockBox.Data.TabRepository.Update(item.Id, result.Title, result.Note, result.Icon, result.Kind, result.ExtList);
 
             item.Title = result.Title;
             item.Note = result.Note;
@@ -1114,14 +1092,10 @@ namespace BlockBox
             item.ExtensionList = result.ExtList;
             item.RefreshLocalizedTitle();
 
-            var updated = TabItems.FirstOrDefault(t => t.Id == item.Id);
-            if (updated != null)
-            {
-                updated.RefreshLocalizedTitle();
-                RefreshTabHeader(updated);
-                MyTabView.SelectedItem = updated;
-            }
-            MyTabView.UpdateLayout();
+            UpdateEmptyHint();
+            if (filterChanged)
+                LoadShortcutsFromDb();
+            MyTabView.SelectedItem = item;
         }
 
         private async Task DeleteTabAsync(MyTabItem item)

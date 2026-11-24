@@ -493,7 +493,7 @@
                                                 <StackPanel Orientation="Horizontal" Spacing="6"
                                 Padding="4,0"
                                 VerticalAlignment="Center">
-                                                    <FontIcon Glyph="{x:Bind IconGlyph}"
+                                                    <FontIcon Glyph="{x:Bind IconGlyph, Mode=OneWay}"
                                   FontSize="{x:Bind helpers:FontSizeHelper.TabInitialFontSize}"
                                   VerticalAlignment="Center"/>
                                                     <TextBlock Text="{x:Bind DisplayTitle, Mode=OneWay}" Tag="SkipLocalization"
