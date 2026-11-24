@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <!--
   Microsoft Store 打包用的清单模板（Windows Application Packaging Project / 单项目 MSIX）。
   占位符由 Visual Studio 的 “Associate with Store” 或打包脚本替换：
@@ -54,7 +54,7 @@
       <uap:VisualElements
         DisplayName="Block Box"
         Description="程序文件管理器"
-        BackgroundColor="#1F1F1F"
+        BackgroundColor="transparent"
         Square150x150Logo="Assets\Square150x150Logo.png"
         Square44x44Logo="Assets\Square44x44Logo.png" />
       <Extensions>
