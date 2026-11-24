@@ -4089,7 +4089,12 @@ namespace BlockBox
 
             var updated = TabItems.FirstOrDefault(t => t.Id == item.Id);
             if (updated != null)
+            {
+                // TabView 的表头是 OneTime 绑定，集合替换后容器可能还显示旧 Header；
+                // 显式刷新一次，悬停菜单和新标签名才会一致。
+                RefreshTabHeader(updated);
                 MyTabView.SelectedItem = updated;
+            }
             MyTabView.UpdateLayout();
         }
 

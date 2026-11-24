@@ -184,6 +184,28 @@ namespace BlockBox
             }
         }
 
+        /// <summary>
+        /// TabView 的 Header 是 OneTime x:Bind；集合项被替换后容器可能还显示旧 Header。
+        /// 先尝试直接改 Header；如果容器没刷新，就把集合项移除再插回，强制重建容器。
+        /// </summary>
+        private void RefreshTabHeader(MyTabItem item)
+        {
+            int index = TabItems.IndexOf(item);
+            if (index < 0) return;
+
+            MyTabView.UpdateLayout();
+            if (MyTabView.ContainerFromIndex(index) is TabViewItem container)
+            {
+                container.Header = item;
+                container.UpdateLayout();
+            }
+
+            // 最可靠：移除再插回，TabView 会重新套用 TabItemTemplate，Header 一定指向新对象。
+            TabItems.RemoveAt(index);
+            TabItems.Insert(index, item);
+            MyTabView.UpdateLayout();
+        }
+
         private static bool IsSameTabIdentity(MyTabItem left, MyTabItem right)
         {
             if (left.BuiltinKind != BuiltinTabKind.None || right.BuiltinKind != BuiltinTabKind.None)
