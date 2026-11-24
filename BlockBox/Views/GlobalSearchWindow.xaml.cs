@@ -1377,7 +1377,10 @@ namespace BlockBox.Views
                 try
                 {
                     var response = await _searchClient.SendAsync("status");
-                    if (response.Status == "ok")
+
+                    // 服务的 status 操作返回的是索引状态："ready" / "indexing"，
+                    // 不是 "ok"。只认 "ok" 会永远等不到，页面就停在“正在等待服务就绪”。
+                    if (response.Status is "ok" or "ready" or "indexing")
                     {
                         HideServicePanel();
                         Search();
